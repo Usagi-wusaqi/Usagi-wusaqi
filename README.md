@@ -27,10 +27,10 @@ I'm a software developer who loves turning ideas into reality through code. With
 <table align="center">
   <tr>
     <td align="center" style="vertical-align: top;">
-      <img src="https://github-readme-stats-navy-six-17.vercel.app/api?username=Usagi-wusaqi&show_icons=true&locale=en&include_all_commits=true&rank_icon=github" alt="GitHub stats" width="400px" />
+      <img src="https://github-readme-stats-navy-six-17.vercel.app/api?username=Usagi-wusaqi&show_icons=true&locale=en&include_all_commits=true&rank_icon=github&show=reviews,discussions,prs_merged,prs_closed,issues_closed,discussions_started&count_private=true&cache_seconds=300&disable_animations=false" alt="GitHub stats" width="400px" />
     </td>
     <td align="center" style="vertical-align: top;">
-      <img src="https://github-readme-stats-navy-six-17.vercel.app/api/top-langs?username=Usagi-wusaqi&show_icons=true&locale=en&layout=donut&include_all_commits=true&langs_count=100" alt="Languages" width="400px" />
+      <img src="https://github-readme-stats-navy-six-17.vercel.app/api/top-langs?username=Usagi-wusaqi&show_icons=true&locale=en&layout=donut&include_all_commits=true&langs_count=100&hide_border=false&disable_animations=false&cache_seconds=300" alt="Languages" width="400px" />
     </td>
   </tr>
 </table>
