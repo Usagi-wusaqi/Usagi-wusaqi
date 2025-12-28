@@ -26,7 +26,7 @@ I'm a code enthusiast who loves turning ideas into reality through code. With a 
 
 <table align="center">
   <tr>
-    <td align="center" style="vertical-align: top;">➕ 增加行数: 9559 ➖ 删除行数: 1622 🖼️ 图片贡献: 55</td>
+    <td align="center" style="vertical-align: top;">➕ 增加行数: 10371 ➖ 删除行数: 1608 🖼️ 图片贡献: 55</td>
     <td align="center" style="vertical-align: top;" rowspan="2">
       <img src="https://github-readme-stats-navy-six-17.vercel.app/api/top-langs?username=Usagi-wusaqi&show_icons=true&locale=en&layout=donut&include_all_commits=true&langs_count=100&hide_border=false&disable_animations=false&cache_seconds=300" alt="Languages" width="400px" />
     </td>

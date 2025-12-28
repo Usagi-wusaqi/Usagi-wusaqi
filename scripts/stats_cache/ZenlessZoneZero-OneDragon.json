@@ -1,0 +1,196 @@
+{
+  "_metadata": {
+    "last_updated": "2025-12-28T11:22:20.811267",
+    "total_commits": 1
+  },
+  "data": {
+    "Usagi-wusaqi/ZenlessZoneZero-OneDragon": {
+      "e49ecf9272008f1dda6196b4ca8bd8f3c5f98785": {
+        "images": [],
+        "image_count": 0,
+        "timestamp": "2025-12-28T11:22:12.854613"
+      },
+      "885016f112f6f8e176b99618a9272dbd45892fd2": {
+        "images": [],
+        "image_count": 0,
+        "timestamp": "2025-12-28T11:22:13.203624"
+      },
+      "4a6360c13604e55bb86a0c281d244006d9b71407": {
+        "images": [],
+        "image_count": 0,
+        "timestamp": "2025-12-28T11:22:13.513841"
+      },
+      "cc6dde7cfd46ee90b97475b5f747794eaa8bea32": {
+        "images": [],
+        "image_count": 0,
+        "timestamp": "2025-12-28T11:22:13.868565"
+      },
+      "d15bf4106a5471a7a25c57f44f2daab3b6605d32": {
+        "images": [],
+        "image_count": 0,
+        "timestamp": "2025-12-28T11:22:14.160134"
+      },
+      "97e26ebb30cda1655ef49448f6ae5aa53292f0aa": {
+        "images": [],
+        "image_count": 0,
+        "timestamp": "2025-12-28T11:22:14.430202"
+      },
+      "d914ea68f0dafc6e6db7f6442f8fe9028b75165e": {
+        "images": [
+          "assets/template/lost_void/gear_yidhari_1/mask.png",
+          "assets/template/lost_void/gear_yidhari_1/raw.png",
+          "assets/template/lost_void/gear_yidhari_2/mask.png",
+          "assets/template/lost_void/gear_yidhari_2/raw.png",
+          "assets/template/lost_void/gear_yidhari_3/mask.png",
+          "assets/template/lost_void/gear_yidhari_3/raw.png"
+        ],
+        "image_count": 6,
+        "timestamp": "2025-12-28T11:22:14.776668"
+      },
+      "54a042191c716e776c81aa997c8e0cd2939b95fd": {
+        "images": [],
+        "image_count": 0,
+        "timestamp": "2025-12-28T11:22:15.074491"
+      },
+      "0f542e19129f6a0c1d1a0f196cccb087cf130ab8": {
+        "images": [],
+        "image_count": 0,
+        "timestamp": "2025-12-28T11:22:15.372152"
+      },
+      "ed84b4178f68d3e51ca004af8f16826d2848f1cd": {
+        "images": [
+          "assets/template/battle/avatar_1_manato_white_heart_silhouette/mask.png",
+          "assets/template/battle/avatar_1_manato_white_heart_silhouette/raw.png",
+          "assets/template/battle/avatar_2_manato_white_heart_silhouette/mask.png",
+          "assets/template/battle/avatar_2_manato_white_heart_silhouette/raw.png",
+          "assets/template/battle/avatar_chain_manato_white_heart_silhouette/mask.png",
+          "assets/template/battle/avatar_chain_manato_white_heart_silhouette/raw.png",
+          "assets/template/battle/avatar_quick_manato_white_heart_silhouette/mask.png",
+          "assets/template/battle/avatar_quick_manato_white_heart_silhouette/raw.png",
+          "assets/template/hollow/avatar_manato_white_heart_silhouette/mask.png",
+          "assets/template/hollow/avatar_manato_white_heart_silhouette/raw.png",
+          "assets/template/predefined_team/avatar_manato_white_heart_silhouette/mask.png",
+          "assets/template/predefined_team/avatar_manato_white_heart_silhouette/raw.png"
+        ],
+        "image_count": 12,
+        "timestamp": "2025-12-28T11:22:15.669175"
+      },
+      "183184a7205a9922037705b617f4ae3607938eab": {
+        "images": [
+          "assets/template/agent_state/yidhari_2_2/mask.png",
+          "assets/template/agent_state/yidhari_2_2/raw.png",
+          "assets/template/agent_state/yidhari_3_1/mask.png",
+          "assets/template/agent_state/yidhari_3_1/raw.png",
+          "assets/template/agent_state/yidhari_3_2/mask.png",
+          "assets/template/agent_state/yidhari_3_2/raw.png",
+          "assets/template/agent_state/yidhari_3_3/mask.png",
+          "assets/template/agent_state/yidhari_3_3/raw.png",
+          "assets/template/hollow/avatar_yidhari/mask.png",
+          "assets/template/hollow/avatar_yidhari/raw.png"
+        ],
+        "image_count": 10,
+        "timestamp": "2025-12-28T11:22:16.055759"
+      },
+      "98558d799940c63f0046cb9c891726e75f89652a": {
+        "images": [],
+        "image_count": 0,
+        "timestamp": "2025-12-28T11:22:16.380506"
+      },
+      "6305a86b79d9bece754ecfa8aead4e1a34334b87": {
+        "images": [],
+        "image_count": 0,
+        "timestamp": "2025-12-28T11:22:16.664370"
+      },
+      "29dd7b42f63b5e7c989551032a8e68297a06d06e": {
+        "images": [
+          "assets/template/lost_void/gear_lucia_1/mask.png",
+          "assets/template/lost_void/gear_lucia_1/raw.png",
+          "assets/template/lost_void/gear_lucia_2/mask.png",
+          "assets/template/lost_void/gear_lucia_2/raw.png",
+          "assets/template/lost_void/gear_lucia_3/mask.png",
+          "assets/template/lost_void/gear_lucia_3/raw.png"
+        ],
+        "image_count": 6,
+        "timestamp": "2025-12-28T11:22:16.983464"
+      },
+      "c5bd0c4124771a49bae8384009e71c9c9a4c64e8": {
+        "images": [],
+        "image_count": 0,
+        "timestamp": "2025-12-28T11:22:17.266781"
+      },
+      "a823204d1a3fcdd0795fbcf9d00cdf7c61bb61ee": {
+        "images": [
+          "assets/template/battle/avatar_1_vivian_iris_of_the_shore/mask.png",
+          "assets/template/battle/avatar_1_vivian_iris_of_the_shore/raw.png",
+          "assets/template/battle/avatar_2_vivian_iris_of_the_shore/mask.png",
+          "assets/template/battle/avatar_2_vivian_iris_of_the_shore/raw.png",
+          "assets/template/battle/avatar_chain_vivian_iris_of_the_shore/mask.png",
+          "assets/template/battle/avatar_chain_vivian_iris_of_the_shore/raw.png",
+          "assets/template/battle/avatar_hollow_vivian_iris_of_the_shore/mask.png",
+          "assets/template/battle/avatar_hollow_vivian_iris_of_the_shore/raw.png",
+          "assets/template/battle/avatar_quick_vivian_iris_of_the_shore/mask.png",
+          "assets/template/battle/avatar_quick_vivian_iris_of_the_shore/raw.png",
+          "assets/template/battle/avatar_vivian_iris_of_the_shore/mask.png",
+          "assets/template/battle/avatar_vivian_iris_of_the_shore/raw.png"
+        ],
+        "image_count": 12,
+        "timestamp": "2025-12-28T11:22:17.555845"
+      },
+      "3b9242ad2738f9a7a68d087672c3599ee152a292": {
+        "images": [],
+        "image_count": 0,
+        "timestamp": "2025-12-28T11:22:17.846752"
+      },
+      "1b784b9210e57ebe250518697faad9dc052d3f12": {
+        "images": [],
+        "image_count": 0,
+        "timestamp": "2025-12-28T11:22:18.103347"
+      },
+      "223a6dc2aa5432ef3fcdfa34ec9cbfa3fb2ea788": {
+        "images": [],
+        "image_count": 0,
+        "timestamp": "2025-12-28T11:22:18.375725"
+      },
+      "7ce9bc6df899f04d463eff782893d228a2ebc754": {
+        "images": [],
+        "image_count": 0,
+        "timestamp": "2025-12-28T11:22:18.667781"
+      },
+      "0bd64a3b750d8ab8782c5236570de3ddcafad445": {
+        "images": [],
+        "image_count": 0,
+        "timestamp": "2025-12-28T11:22:19.027302"
+      },
+      "377fadae4d8fb79ab0580911f2a3b28106361d1d": {
+        "images": [],
+        "image_count": 0,
+        "timestamp": "2025-12-28T11:22:19.325366"
+      },
+      "7feed9ff4b12d4a16d329d07ac2cb8076a43c11f": {
+        "images": [],
+        "image_count": 0,
+        "timestamp": "2025-12-28T11:22:19.626702"
+      },
+      "ddaa5dd0ba8655be26e8bec236d13b80a09a147a": {
+        "images": [],
+        "image_count": 0,
+        "timestamp": "2025-12-28T11:22:19.885636"
+      },
+      "971484fc108b3e2b52ca9e5e1f9683b8e6cf3375": {
+        "images": [],
+        "image_count": 0,
+        "timestamp": "2025-12-28T11:22:20.183161"
+      },
+      "fee496038236300e598021ba477ff727eb0c52ca": {
+        "images": [],
+        "image_count": 0,
+        "timestamp": "2025-12-28T11:22:20.502622"
+      },
+      "d0cdf46c5a05ed4e6077c10b7fefee4134ba0296": {
+        "images": [],
+        "image_count": 0,
+        "timestamp": "2025-12-28T11:22:20.811157"
+      }
+    }
+  }
+}
