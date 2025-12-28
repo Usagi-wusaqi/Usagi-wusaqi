@@ -12,7 +12,7 @@
 
 ## 🌟 About Me
 
-I'm a software developer who loves turning ideas into reality through code. With a strong passion for technology and continuous learning, I actively contribute to open-source projects and share knowledge with the developer community.
+I'm a code enthusiast who loves turning ideas into reality through code. With a strong passion for technology and continuous learning, I actively contribute to open-source projects and share knowledge with the developer community.
 
 - 🔭 Currently working on exciting projects
 - 🌱 Always learning new technologies and best practices
@@ -26,11 +26,14 @@ I'm a software developer who loves turning ideas into reality through code. With
 
 <table align="center">
   <tr>
+    <td align="center" style="vertical-align: top;">➕ 增加行数: 9478 ➖ 删除行数: 937 🖼️ 图片贡献: 55</td>
+    <td align="center" style="vertical-align: top;" rowspan="2">
+      <img src="https://github-readme-stats-navy-six-17.vercel.app/api/top-langs?username=Usagi-wusaqi&show_icons=true&locale=en&layout=donut&include_all_commits=true&langs_count=100&hide_border=false&disable_animations=false&cache_seconds=300" alt="Languages" width="400px" />
+    </td>
+  </tr>
+  <tr>
     <td align="center" style="vertical-align: top;">
       <img src="https://github-readme-stats-navy-six-17.vercel.app/api?username=Usagi-wusaqi&show_icons=true&locale=en&include_all_commits=true&rank_icon=github&show=reviews,discussions,prs_merged,prs_closed,issues_closed,discussions_started&count_private=true&cache_seconds=300&disable_animations=false" alt="GitHub stats" width="400px" />
-    </td>
-    <td align="center" style="vertical-align: top;">
-      <img src="https://github-readme-stats-navy-six-17.vercel.app/api/top-langs?username=Usagi-wusaqi&show_icons=true&locale=en&layout=donut&include_all_commits=true&langs_count=100&hide_border=false&disable_animations=false&cache_seconds=300" alt="Languages" width="400px" />
     </td>
   </tr>
 </table>

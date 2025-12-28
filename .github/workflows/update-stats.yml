@@ -1,0 +1,37 @@
+name: Update README Stats on Push
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-stats:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Generate Stats
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # 使用 GITHUB_TOKEN 避免 PAT 无效问题
+          USERNAME: ${{ github.repository_owner }}
+        run: |
+          python3 scripts/generate-stats.py
+
+      - name: Commit and Push
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md scripts/stats_cache.json
+          git diff --quiet && git diff --staged --quiet || git commit -m "Update stats (auto)" -m "Co-authored-by: Usagi-wusaqi <2181802336@qq.com>"
+          git push
