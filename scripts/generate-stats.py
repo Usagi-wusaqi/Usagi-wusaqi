@@ -12,8 +12,8 @@ GITHUB_API = "https://api.github.com"
 USERNAME = os.environ.get("USERNAME", "Usagi-wusaqi")
 TOKEN = os.environ.get("GH_TOKEN")
 
-# 缓存文件
-CACHE_FILE = Path(__file__).parent / "stats_cache.json"
+# 缓存目录
+CACHE_DIR = Path(__file__).parent / "stats_cache"
 
 # 颜色定义（终端输出）
 class Colors:
@@ -40,50 +40,55 @@ def run_command(cmd, cwd=None):
         print_color(f"命令执行失败: {e}", Colors.RED)
         return "", 1
 
-def load_cache(cache_file=None):
-    """加载缓存数据"""
-    cache_path = Path(cache_file) if cache_file else CACHE_FILE
+def load_cache(owner, repo_name):
+    """加载指定仓库的缓存数据"""
+    cache_dir = CACHE_DIR
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    cache_file = cache_dir / f"{repo_name}.json"
 
     try:
-        with open(cache_path, 'r', encoding='utf-8') as f:
+        with open(cache_file, 'r', encoding='utf-8') as f:
             cache_data = json.load(f)
-            print_color(f"💾 已加载缓存: {cache_path}", Colors.GREEN)
+            print_color(f"💾 已加载缓存: {cache_file}", Colors.GREEN)
 
             # 处理新旧缓存格式
             if '_metadata' in cache_data:
                 metadata = cache_data['_metadata']
-                print_color(f"   缓存包含 {metadata.get('total_repos', 0)} 个仓库", Colors.NC)
                 print_color(f"   缓存包含 {metadata.get('total_commits', 0)} 个commits", Colors.NC)
                 print_color(f"   最后更新时间: {metadata.get('last_updated', '未知')}", Colors.NC)
                 return cache_data.get('data', {})
             else:
                 # 旧格式，直接返回
-                print_color(f"   缓存包含 {len(cache_data)} 个仓库的数据", Colors.NC)
+                print_color(f"   缓存包含 {len(cache_data)} 个commits的数据", Colors.NC)
                 return cache_data
     except (json.JSONDecodeError, IOError) as e:
         print_color(f"⚠️  加载缓存失败: {e}", Colors.YELLOW)
         return {}
 
-def save_cache(cache_data, cache_file=None):
-    """保存缓存数据，记录更新时间"""
-    cache_path = Path(cache_file) if cache_file else CACHE_FILE
+def save_cache(owner, repo_name, cache_data):
+    """保存指定仓库的缓存数据，记录更新时间"""
+    cache_dir = CACHE_DIR
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    cache_file = cache_dir / f"{repo_name}.json"
+
     try:
         # 添加更新时间戳
         cache_data_with_metadata = {
             '_metadata': {
                 'last_updated': datetime.now().isoformat(),
-                'total_repos': len(cache_data),
-                'total_commits': sum(len(commits) for commits in cache_data.values())
+                'total_commits': len(cache_data)
             },
             'data': cache_data
         }
 
-        with open(cache_path, 'w', encoding='utf-8') as f:
+        with open(cache_file, 'w', encoding='utf-8') as f:
             json.dump(cache_data_with_metadata, f, indent=2, ensure_ascii=False)
 
-        print_color(f"✅ 缓存已保存: {cache_path}", Colors.GREEN)
+        print_color(f"✅ 缓存已保存: {cache_file}", Colors.GREEN)
         print_color(f"   更新时间: {cache_data_with_metadata['_metadata']['last_updated']}", Colors.NC)
-        print_color(f"   仓库数: {cache_data_with_metadata['_metadata']['total_repos']}, commits: {cache_data_with_metadata['_metadata']['total_commits']}", Colors.NC)
+        print_color(f"   commits: {cache_data_with_metadata['_metadata']['total_commits']}", Colors.NC)
         return True
     except Exception as e:
         print_color(f"⚠️  保存缓存失败: {e}", Colors.YELLOW)
@@ -147,14 +152,14 @@ def get_repos():
         print_color(f"数据内容: {output[:500]}", Colors.RED)
         return []
 
-def get_user_contributed_images_from_api(owner, repo_name, username, cache_data=None):
+def get_user_contributed_images_from_api(owner, repo_name, username):
     """使用 GitHub API 获取用户贡献的图片文件数量（带缓存）"""
     print_color(f"    🖼️  使用API统计图片贡献: {owner}/{repo_name}", Colors.YELLOW)
 
-    if cache_data is None:
-        cache_data = {}
-
     repo_key = get_cache_key(owner, repo_name)
+
+    # 加载该仓库的缓存
+    cache_data = load_cache(owner, repo_name)
 
     # 获取用户的所有commits（分页获取）
     page = 1
@@ -170,14 +175,14 @@ def get_user_contributed_images_from_api(owner, repo_name, username, cache_data=
         output, returncode = run_command(curl_cmd)
 
         if returncode != 0:
-            print_color(f"    ❌ API调用失败", Colors.RED)
-            return 0, cache_data
+            print_color("    ❌ API调用失败", Colors.RED)
+            return 0
 
         try:
             commits = json.loads(output)
             if not isinstance(commits, list):
-                print_color(f"    ❌ API返回数据格式错误", Colors.RED)
-                return 0, cache_data
+                print_color("    ❌ API返回数据格式错误", Colors.RED)
+                return 0
 
             if not commits:
                 break
@@ -195,7 +200,7 @@ def get_user_contributed_images_from_api(owner, repo_name, username, cache_data=
 
         except json.JSONDecodeError as e:
             print_color(f"    ❌ JSON 解析失败: {e}", Colors.RED)
-            return 0, cache_data
+            return 0
 
     print_color(f"    📊 总共找到 {total_commits} 个commits", Colors.NC)
 
@@ -268,7 +273,7 @@ def get_user_contributed_images_from_api(owner, repo_name, username, cache_data=
     image_count = len(image_files)
 
     # 显示统计信息
-    print_color(f"    💾 缓存统计:", Colors.YELLOW)
+    print_color("    💾 缓存统计:", Colors.YELLOW)
     print_color(f"       - 缓存命中: {cache_hits} 个commit", Colors.NC)
     print_color(f"       - 缓存未命中: {cache_misses} 个commit", Colors.NC)
     print_color(f"       - API调用: {api_calls} 次", Colors.NC)
@@ -283,7 +288,10 @@ def get_user_contributed_images_from_api(owner, repo_name, username, cache_data=
     else:
         print_color(f"    ℹ️  图片贡献总数: {image_count} 个", Colors.NC)
 
-    return image_count, cache_data
+    # 保存该仓库的缓存
+    save_cache(owner, repo_name, cache_data)
+
+    return image_count
 
 def get_user_contributed_lines_from_api(owner, repo_name, username):
     """使用 GitHub API 获取用户贡献的代码行数"""
@@ -307,22 +315,27 @@ def get_user_contributed_lines_from_api(owner, repo_name, username):
         http_code = "200"
         response_body = output
 
-    print_color(f"    📡 HTTP状态码: {http_code}", Colors.NC)
+    print_color("    📡 HTTP状态码: " + http_code, Colors.NC)
 
     # 检查HTTP状态码
     if http_code == "202":
-        print_color(f"    ⏳ GitHub正在计算贡献统计，暂时无法获取数据", Colors.YELLOW)
+        print_color("    ⏳ GitHub正在计算贡献统计，暂时无法获取数据", Colors.YELLOW)
         return 0, 0
 
     # 解析 JSON
     try:
         contributors = json.loads(response_body)
         if not isinstance(contributors, list):
-            print_color(f"    ❌ API返回数据格式错误: {type(contributors)}", Colors.RED)
-            print_color(f"    数据内容: {response_body[:500]}", Colors.RED)
+            print_color("    ❌ API返回数据格式错误: " + str(type(contributors)), Colors.RED)
+            print_color("    数据内容: " + response_body[:500], Colors.RED)
             return 0, 0
 
         print_color(f"    👥 API返回了 {len(contributors)} 个贡献者", Colors.NC)
+
+        # 如果返回空数组，打印详细信息
+        if len(contributors) == 0:
+            print_color("    ⚠️  API返回空数组，可能仓库没有代码贡献或GitHub正在计算", Colors.YELLOW)
+            return 0, 0
 
         # 查找当前用户的贡献
         user_contrib = None
@@ -333,7 +346,11 @@ def get_user_contributed_lines_from_api(owner, repo_name, username):
                 break
 
         if not user_contrib:
-            print_color(f"    ⚠️  未找到用户 {username} 的贡献数据", Colors.YELLOW)
+            print_color("    ⚠️  未找到用户 " + username + " 的贡献数据", Colors.YELLOW)
+            # 打印所有贡献者名称用于调试
+            contrib_names = [c.get('author', {}).get('login', 'unknown') for c in contributors if c.get('author')]
+            if contrib_names:
+                print_color("    📋 贡献者列表: " + ", ".join(contrib_names), Colors.NC)
             return 0, 0
 
         weeks = user_contrib.get('weeks', [])
@@ -362,7 +379,7 @@ def get_user_contributed_lines(username, repo_name, repo_info=None):
     target_repo_name = repo_name
 
     is_fork = repo_info.get('fork', False) if repo_info else False
-    print_color(f"    📌 仓库类型: {'Fork 仓库' if is_fork else '原创仓库'}", Colors.NC)
+    print_color("    📌 仓库类型: " + ('Fork 仓库' if is_fork else '原创仓库'), Colors.NC)
 
     # 对于 fork 仓库，从上游仓库获取贡献统计
     if is_fork and repo_info:
@@ -374,26 +391,21 @@ def get_user_contributed_lines(username, repo_name, repo_info=None):
             if upstream_owner and upstream_name:
                 owner = upstream_owner
                 target_repo_name = upstream_name
-                print_color(f"    🔗 从上游仓库获取: {owner}/{target_repo_name}", Colors.YELLOW)
+                print_color("    🔗 从上游仓库获取: " + owner + "/" + target_repo_name, Colors.YELLOW)
 
     # 使用确定的owner和repo_name获取贡献统计
     return get_user_contributed_lines_from_api(owner, target_repo_name, username)
 
-def process_repos(repos, include_images=True, cache_data=None, cache_file=None):
+def process_repos(repos, include_images=True):
     """处理所有仓库
 
     Args:
         repos: 仓库列表
         include_images: 是否统计图片贡献
-        cache_data: 缓存数据字典
-        cache_file: 缓存文件路径
     """
     print_color("=" * 60, Colors.GREEN)
     print_color("开始处理仓库...", Colors.GREEN)
     print_color("=" * 60, Colors.GREEN)
-
-    if cache_data is None:
-        cache_data = {}
 
     total_additions = 0
     total_deletions = 0
@@ -410,11 +422,11 @@ def process_repos(repos, include_images=True, cache_data=None, cache_file=None):
         print_color("\n" + "=" * 60, Colors.GREEN)
         print_color(f"📦 仓库: {repo_name}", Colors.YELLOW)
         print_color("=" * 60, Colors.GREEN)
-        print_color(f"  URL: {repo_url}", Colors.NC)
-        print_color(f"  类型: {'Fork 仓库' if is_fork else '原创仓库'}", Colors.NC)
+        print_color("  URL: " + repo_url, Colors.NC)
+        print_color("  类型: " + ('Fork 仓库' if is_fork else '原创仓库'), Colors.NC)
 
         # 获取代码贡献统计（不需要克隆）
-        print_color(f"  📊 统计代码贡献...", Colors.YELLOW)
+        print_color("  📊 统计代码贡献...", Colors.YELLOW)
         repo_additions, repo_deletions = get_user_contributed_lines(USERNAME, repo_name, repo)
 
         repo_image_count = 0
@@ -434,15 +446,15 @@ def process_repos(repos, include_images=True, cache_data=None, cache_file=None):
                         owner = upstream_owner
                         target_repo_name = upstream_name
 
-            repo_image_count, cache_data = get_user_contributed_images_from_api(owner, target_repo_name, USERNAME, cache_data)
+            repo_image_count = get_user_contributed_images_from_api(owner, target_repo_name, USERNAME)
         else:
-            print_color(f"  ⏭️  跳过图片统计（未启用）", Colors.YELLOW)
+            print_color("  ⏭️  跳过图片统计（未启用）", Colors.YELLOW)
 
         total_image_count += repo_image_count
 
         # 显示结果
         if repo_additions == 0 and repo_deletions == 0 and repo_image_count == 0:
-            print_color(f"  ⚠️  用户没有贡献代码或图片", Colors.YELLOW)
+            print_color("  ⚠️  用户没有贡献代码或图片", Colors.YELLOW)
         else:
             print_color(f"  ✅ 代码贡献: +{repo_additions} 增加, -{repo_deletions} 删除", Colors.GREEN)
             print_color(f"  ✅ 图片贡献: {repo_image_count} 个", Colors.GREEN)
@@ -459,18 +471,11 @@ def process_repos(repos, include_images=True, cache_data=None, cache_file=None):
     print_color(f"  🖼️ 总图片贡献: {total_image_count} 个", Colors.GREEN)
     print_color("=" * 60, Colors.GREEN)
 
-    # 保存缓存
-    if include_images:
-        if save_cache(cache_data, cache_file):
-            print_color(f"✅ 缓存保存成功", Colors.GREEN)
-        else:
-            print_color(f"⚠️  缓存保存失败", Colors.YELLOW)
-
     return {
         'total_additions': total_additions,
         'total_deletions': total_deletions,
         'image_count': total_image_count
-    }, cache_data
+    }
 
 def update_readme(stats):
     """更新 README.md"""
@@ -496,7 +501,7 @@ def update_readme(stats):
     with open(readme_file, 'w', encoding='utf-8') as f:
         f.write(content)
 
-    print_color(f"✅ README.md 更新成功！", Colors.GREEN)
+    print_color("✅ README.md 更新成功！", Colors.GREEN)
     print_color(f"   ➕ 增加行数: {stats.get('total_additions', 0)}", Colors.NC)
     print_color(f"   ➖ 删除行数: {stats.get('total_deletions', 0)}", Colors.NC)
     print_color(f"   🖼️ 图片贡献: {stats.get('image_count', 0)}", Colors.NC)
@@ -508,40 +513,32 @@ def main():
     parser = argparse.ArgumentParser(description='生成 GitHub 统计')
     parser.add_argument('--no-images', action='store_true', help='不统计图片贡献')
     parser.add_argument('--clear-cache', action='store_true', help='清除缓存文件')
-    parser.add_argument('--cache-file', type=str, default=None,
-                       help='指定缓存文件路径（默认: scripts/stats_cache.json）')
     args = parser.parse_args()
 
     print_color("=" * 60, Colors.GREEN)
     print_color("🚀 开始生成 GitHub 统计...", Colors.GREEN)
     print_color("=" * 60, Colors.GREEN)
-    print_color(f"📊 统计配置:", Colors.YELLOW)
+    print_color("📊 统计配置:", Colors.YELLOW)
     print_color(f"   - 图片统计: {'关闭' if args.no_images else '开启'}", Colors.NC)
     if not args.no_images:
-        cache_file_path = args.cache_file or str(CACHE_FILE)
-        print_color(f"   - 缓存文件: {cache_file_path}", Colors.NC)
+        print_color(f"   - 缓存目录: {CACHE_DIR}", Colors.NC)
     print_color("=" * 60, Colors.GREEN)
 
     # 处理清除缓存
     if args.clear_cache:
-        cache_path = Path(args.cache_file) if args.cache_file else CACHE_FILE
-        if cache_path.exists():
-            print_color(f"🗑️  清除缓存文件: {cache_path}", Colors.YELLOW)
-            cache_path.unlink()
-            print_color(f"✅ 缓存已清除", Colors.GREEN)
+        if CACHE_DIR.exists():
+            print_color(f"🗑️  清除缓存目录: {CACHE_DIR}", Colors.YELLOW)
+            import shutil
+            shutil.rmtree(CACHE_DIR)
+            print_color("✅ 缓存已清除", Colors.GREEN)
         else:
-            print_color(f"ℹ️  缓存文件不存在: {cache_path}", Colors.NC)
+            print_color("ℹ️  缓存目录不存在: " + str(CACHE_DIR), Colors.NC)
         return 0
 
     # 检查 TOKEN
     if not TOKEN:
         print_color("❌ 错误: GITHUB_TOKEN 环境变量未设置", Colors.RED)
         return 1
-
-    # 加载缓存
-    cache_data = {}
-    if not args.no_images:
-        cache_data = load_cache(args.cache_file)
 
     # 获取仓库列表
     repos = get_repos()
@@ -550,7 +547,7 @@ def main():
         return 1
 
     # 处理仓库
-    stats, cache_data = process_repos(repos, include_images=not args.no_images, cache_data=cache_data, cache_file=args.cache_file)
+    stats = process_repos(repos, include_images=not args.no_images)
 
     # 更新 README.md
     update_readme(stats)
