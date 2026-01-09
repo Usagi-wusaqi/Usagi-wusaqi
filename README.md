@@ -26,7 +26,7 @@ I'm a code enthusiast who loves turning ideas into reality through code. With a 
 
 <table align="center">
   <tr>
-    <td align="center" style="vertical-align: top;">➕ 增加行数: 13913 ➖ 删除行数: 3150 🖼️ 图片贡献: 89</td>
+    <td align="center" style="vertical-align: top;">➕additions: 0 ➖deletions: 0 🖼️images: 0</td>
     <td align="center" style="vertical-align: top;" rowspan="2">
       <img src="https://github-readme-stats-navy-six-17.vercel.app/api/top-langs?username=Usagi-wusaqi&show_icons=true&locale=en&layout=donut&include_all_commits=true&langs_count=100&hide_border=false&disable_animations=false&cache_seconds=300" alt="Languages" width="400px" />
     </td>
@@ -61,5 +61,9 @@ I'm a code enthusiast who loves turning ideas into reality through code. With a 
   <p>
     Made with ❤️ by <a href="https://github.com/Usagi-wusaqi">Usagi-wusaqi</a>
   </p>
+
+  <div align="right">
+    <small><em>Last updated: 2026-01-09 17:42:07 UTC+8</em></small>
+  </div>
 
 </div>

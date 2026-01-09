@@ -1,15 +1,26 @@
 #!/usr/bin/env python3
-"""GitHub 贡献统计脚本
+"""GitHub Contributions Statistics Script
 
-功能：
-- 获取用户所有仓库的贡献统计（代码行数、图片数量）
-- 支持本地 git log 和 GitHub API 双数据源
-- 智能缓存管理：永久保存历史数据，只清除被变基的 commits
-- 支持 Fork 仓库分析（自动分析上游仓库）
+## 核心功能
+- 统计所有仓库的贡献（additions/deletions、images数量）
+- 智能缓存系统，避免重复分析已处理的 commits
+- 支持 Fork 仓库（自动分析上游仓库）
+- 自动更新 README.md 统计数据和时间
 
-数据流程：
-1. 获取仓库列表 → 2. 克隆/更新仓库 → 3. 获取 commits（git log + API）
-4. 合并数据源 → 5. 清理过期缓存 → 6. 分析 commits → 7. 更新 README
+## 数据源
+- 本地 git log：完整历史数据
+- GitHub API：最新数据（最多 1000 个 commits）
+- 智能合并：取两者优势，确保数据完整性
+
+## 缓存机制
+每个仓库一个 JSON 文件，包含：
+- 元数据：总 commits 数、总 additions/deletions 数、总 images 数
+- 详细数据：每个 commit 的统计数据
+
+## 更新策略
+- 只有运行脚本时才更新数据
+- 使用正则匹配替换，保持 README.md 原有格式
+- 永久保存历史数据，智能清理过期缓存
 """
 
 import os
@@ -19,7 +30,7 @@ import re
 import shutil
 import argparse
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 # ============================================================================
 # 配置
@@ -82,7 +93,6 @@ def load_cache(repo_name):
             if '_metadata' in cache_data:
                 metadata = cache_data['_metadata']
                 print_color(f"   缓存包含 {metadata.get('total_commits', 0)} 个commits", Colors.NC)
-                print_color(f"   最后更新时间: {metadata.get('last_updated', '未知')}", Colors.NC)
                 return cache_data.get('data', {})
             else:
                 # 旧格式，直接返回
@@ -94,7 +104,29 @@ def load_cache(repo_name):
 
 
 def save_cache(repo_name, cache_data):
-    """保存指定仓库的缓存数据，记录更新时间"""
+    """保存指定仓库的缓存数据
+
+    功能：
+    - 按时间戳排序 commits（从旧到新）
+    - 重新编号 commit index（从 1 开始）
+    - 统计总 commits 数、总增删行数和总图片数
+    - 保存为带 metadata 的 JSON 格式
+
+    参数：
+    - repo_name: 仓库名称
+    - cache_data: 缓存数据字典
+
+    JSON 输出格式：
+    {
+      "_metadata": {
+        "total_commits": int,    // 总 commit 数
+        "total_additions": int,  // 总增加行数
+        "total_deletions": int,  // 总删除行数
+        "total_images": int      // 总图片数
+      },
+      "data": { ... }            // commit 数据
+    }
+    """
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_file = CACHE_DIR / f"{repo_name}.json"
 
@@ -102,27 +134,47 @@ def save_cache(repo_name, cache_data):
         # 对每个仓库的 commits 按时间戳排序（从旧到新）
         sorted_cache_data = {}
         total_commits = 0
+        total_images = 0
+        total_additions = 0
+        total_deletions = 0
 
         for repo_name, commits in cache_data.items():
             if isinstance(commits, list):
                 # 按 timestamp 从旧到新排序（老的在前，新的在后）
                 sorted_commits = sorted(commits, key=lambda x: x.get('timestamp', ''))
 
-                # 重新编号 index（从 1 开始）
+                # 重新编号 index（从 1 开始）并统计各项数据
+                repo_images = 0
+                repo_additions = 0
+                repo_deletions = 0
                 for idx, commit in enumerate(sorted_commits, start=1):
                     commit['index'] = idx
+                    repo_additions += commit.get('additions', 0)
+                    repo_deletions += commit.get('deletions', 0)
+                    repo_images += commit.get('images', 0)
 
                 sorted_cache_data[repo_name] = sorted_commits
                 total_commits += len(sorted_commits)
+                total_additions += repo_additions
+                total_deletions += repo_deletions
+                total_images += repo_images
             else:
                 # 旧格式，保持原样
                 sorted_cache_data[repo_name] = commits
                 total_commits += len(commits)
+                # 旧格式也尝试统计各项数据
+                if isinstance(commits, dict):
+                    for commit_data in commits.values():
+                        total_additions += commit_data.get('additions', 0)
+                        total_deletions += commit_data.get('deletions', 0)
+                        total_images += commit_data.get('images', 0)
 
         cache_data_with_metadata = {
             '_metadata': {
-                'last_updated': datetime.now().isoformat(),
-                'total_commits': total_commits
+                'total_commits': total_commits,
+                'total_additions': total_additions,
+                'total_deletions': total_deletions,
+                'total_images': total_images
             },
             'data': sorted_cache_data
         }
@@ -131,8 +183,10 @@ def save_cache(repo_name, cache_data):
             json.dump(cache_data_with_metadata, f, indent=2, ensure_ascii=False)
 
         print_color(f"✅ 缓存已保存: {cache_file}", Colors.GREEN)
-        print_color(f"   更新时间: {cache_data_with_metadata['_metadata']['last_updated']}", Colors.NC)
         print_color(f"   commits: {cache_data_with_metadata['_metadata']['total_commits']}", Colors.NC)
+        print_color(f"   additions: {cache_data_with_metadata['_metadata']['total_additions']}", Colors.NC)
+        print_color(f"   deletions: {cache_data_with_metadata['_metadata']['total_deletions']}", Colors.NC)
+        print_color(f"   images: {cache_data_with_metadata['_metadata']['total_images']}", Colors.NC)
         return True
     except Exception as e:
         print_color(f"⚠️  保存缓存失败: {e}", Colors.YELLOW)
@@ -224,7 +278,7 @@ def clean_stale_cache(cache_data, current_commits_with_data, repo_key):
                     del repo_cache[commit_sha]
                     deleted_count += 1
 
-        print_color(f"    ✅ 已清除 {deleted_count} 个过期的commit缓存及其贡献数据", Colors.GREEN)
+        print_color(f"    ✅ 已清除 {deleted_count} 个过期的commit缓存及其统计数据", Colors.GREEN)
         if preserved_count > 0:
             print_color(f"    ℹ️  保留 {preserved_count} 个永久历史数据（比当前最老数据更久远）", Colors.NC)
 
@@ -443,7 +497,7 @@ def merge_commits(git_commits, api_commits):
 def analyze_commits(repo_path, owner, repo_name, username, include_images=True):
     """同时分析代码行数和图片贡献
 
-    返回: (additions, deletions, image_count)
+    返回: (additions, deletions, total_images)
     """
     print_color(f"    📊 开始分析commits...", Colors.YELLOW)
 
@@ -483,7 +537,7 @@ def analyze_commits(repo_path, owner, repo_name, username, include_images=True):
     # 统计数据
     total_additions = 0
     total_deletions = 0
-    total_image_count = 0
+    total_images = 0
     processed = 0
     cache_hits = 0
     cache_misses = 0
@@ -511,13 +565,12 @@ def analyze_commits(repo_path, owner, repo_name, username, include_images=True):
             total_additions += cached_data.get('additions', 0)
             total_deletions += cached_data.get('deletions', 0)
             if include_images:
-                total_image_count += cached_data.get('images', 0)
+                total_images += cached_data.get('images', 0)
             cache_hits += 1
             continue
 
         cache_misses += 1
         commit_data = {}
-        commit_images = []  # 初始化 commit_images
 
         # 获取 commit 详情
         if repo_path:
@@ -575,10 +628,10 @@ def analyze_commits(repo_path, owner, repo_name, username, include_images=True):
                 except json.JSONDecodeError:
                     continue
 
-        # 统计代码行数和图片
+        # 统计 additions/deletions 和 images
         additions = 0
         deletions = 0
-        commit_image_count = 0
+        images = 0
 
         for file in commit_data.get('files', []):
             # 代码行数统计
@@ -590,11 +643,11 @@ def analyze_commits(repo_path, owner, repo_name, username, include_images=True):
             if include_images and file.get('status') == 'added':
                 filename = file.get('filename', '')
                 if any(filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp', '.ico']):
-                    commit_image_count += 1
+                    images += 1
 
         total_additions += additions
         total_deletions += deletions
-        total_image_count += commit_image_count
+        total_images += images
 
         # 获取 commit 的时间戳（用于缓存清理时的永久历史判断）
         commit_timestamp = commit.get('commit', {}).get('author', {}).get('date', '')
@@ -609,7 +662,7 @@ def analyze_commits(repo_path, owner, repo_name, username, include_images=True):
             'url': commit_url,  # commit 链接
             'additions': additions,
             'deletions': deletions,
-            'images': commit_image_count,  # 只保存图片数量
+            'images': images,  # 只保存图片数量
             'timestamp': commit_timestamp  # 使用 commit 的时间戳，而不是当前时间
         })
 
@@ -621,14 +674,14 @@ def analyze_commits(repo_path, owner, repo_name, username, include_images=True):
         cache_hit_rate = (cache_hits / total_commits * 100)
         print_color(f"       - 缓存命中率: {cache_hit_rate:.1f}%", Colors.NC)
 
-    print_color(f"    ✅ 代码贡献: +{total_additions} 增加, -{total_deletions} 删除", Colors.GREEN)
+    print_color(f"    ✅ 代码贡献: +{total_additions} additions, -{total_deletions} deletions", Colors.GREEN)
     if include_images:
-        print_color(f"    ✅ 图片贡献: {total_image_count} 个", Colors.GREEN)
+        print_color(f"    ✅ 图片贡献: {total_images} images", Colors.GREEN)
 
     # 保存缓存
     save_cache(repo_name, cache_data)
 
-    return total_additions, total_deletions, total_image_count
+    return total_additions, total_deletions, total_images
 
 
 # ============================================================================
@@ -648,8 +701,8 @@ def process_repos(repos, include_images=True):
 
     total_additions = 0
     total_deletions = 0
-    total_image_count = 0
-    temp_dir = Path("/tmp/repo_stats_temp")
+    total_images = 0
+    temp_dir = Path.cwd() / "temp_repos"
     temp_dir.mkdir(parents=True, exist_ok=True)
 
     for repo in repos:
@@ -689,19 +742,19 @@ def process_repos(repos, include_images=True):
 
         # 同时分析代码行数和图片贡献
         # 注意：repo_path 用于获取 git log，owner/repo_name 用于 API
-        repo_additions, repo_deletions, repo_image_count = analyze_commits(
+        repo_additions, repo_deletions, repo_images = analyze_commits(
             str(repo_path), owner, target_repo_name, USERNAME, include_images
         )
 
-        total_image_count += repo_image_count
+        total_images += repo_images
 
         # 显示结果
-        if repo_additions == 0 and repo_deletions == 0 and repo_image_count == 0:
-            print_color("  ⚠️  用户没有贡献代码或图片", Colors.YELLOW)
+        if repo_additions == 0 and repo_deletions == 0 and repo_images == 0:
+            print_color("  ⚠️  用户没有代码或图片贡献", Colors.YELLOW)
         else:
-            print_color(f"  ✅ 代码贡献: +{repo_additions} 增加, -{repo_deletions} 删除", Colors.GREEN)
+            print_color(f"  ✅ 代码贡献: +{repo_additions} additions, -{repo_deletions} deletions", Colors.GREEN)
             if include_images:
-                print_color(f"  ✅ 图片贡献: {repo_image_count} 个", Colors.GREEN)
+                print_color(f"  ✅ 图片贡献: {repo_images} images", Colors.GREEN)
 
             # 累加到总计
             total_additions += repo_additions
@@ -715,16 +768,16 @@ def process_repos(repos, include_images=True):
     print_color("\n" + "=" * 60, Colors.GREEN)
     print_color("📈 汇总统计", Colors.GREEN)
     print_color("=" * 60, Colors.GREEN)
-    print_color(f"  ➕ 总增加行数: {total_additions}", Colors.GREEN)
-    print_color(f"  ➖ 总删除行数: {total_deletions}", Colors.GREEN)
+    print_color(f"  ➕ 总 additions: {total_additions}", Colors.GREEN)
+    print_color(f"  ➖ 总 deletions: {total_deletions}", Colors.GREEN)
     if include_images:
-        print_color(f"  🖼️ 总图片贡献: {total_image_count} 个", Colors.GREEN)
+        print_color(f"  🖼️ 总 images: {total_images} images", Colors.GREEN)
     print_color("=" * 60, Colors.GREEN)
 
     return {
         'total_additions': total_additions,
         'total_deletions': total_deletions,
-        'image_count': total_image_count
+        'total_images': total_images
     }
 
 
@@ -733,7 +786,20 @@ def process_repos(repos, include_images=True):
 # ============================================================================
 
 def update_readme(stats):
-    """更新 README.md"""
+    """更新 README.md 中的统计数据和时间
+
+    功能：
+    - 使用正则表达式匹配替换统计数字
+    - 使用正则表达式匹配替换更新时间
+    - 保持原有 HTML 格式和样式不变
+
+    替换内容：
+    1. ➕additions: 数字 ➖deletions: 数字 🖼️images: 数字
+    2. 最后更新: YYYY-MM-DD HH:MM:SS
+
+    参数：
+    - stats: 统计数据字典，包含 total_additions, total_deletions, total_images
+    """
     print_color("📝 更新 README.md...", Colors.YELLOW)
 
     readme_file = Path("README.md")
@@ -746,11 +812,18 @@ def update_readme(stats):
     with open(readme_file, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    # 只替换统计数字，保持表格结构不变
-    # 匹配模式：➕ 增加行数: 数字 ➖ 删除行数: 数字 🖼️ 图片贡献: 数字
-    pattern = r'(➕ 增加行数: )\d+( ➖ 删除行数: )\d+( 🖼️ 图片贡献: )\d+'
-    replacement = f'\\g<1>{stats.get("total_additions", 0)}\\g<2>{stats.get("total_deletions", 0)}\\g<3>{stats.get("image_count", 0)}'
+    # 只替换统计数字和更新时间，保持表格结构不变
+    # 匹配模式：➕additions: 数字 ➖deletions: 数字 🖼️images: 数字
+    pattern = r'(➕additions: )\d+( ➖deletions: )\d+( 🖼️images: )\d+'
+    replacement = f'\\g<1>{stats.get("total_additions", 0)}\\g<2>{stats.get("total_deletions", 0)}\\g<3>{stats.get("total_images", 0)}'
     content = re.sub(pattern, replacement, content)
+
+    # 只替换更新时间，使用中国时区 (UTC+8)
+    china_tz = timezone(timedelta(hours=8))
+    current_time = datetime.now(china_tz).strftime("%Y-%m-%d %H:%M:%S UTC+8")
+    time_pattern = r'(Last updated: )\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}( UTC\+8)?'
+    time_replacement = f'\\g<1>{current_time}'
+    content = re.sub(time_pattern, time_replacement, content)
 
     # 写回 README.md
     with open(readme_file, 'w', encoding='utf-8') as f:
@@ -759,7 +832,8 @@ def update_readme(stats):
     print_color("✅ README.md 更新成功！", Colors.GREEN)
     print_color(f"   ➕ 增加行数: {stats.get('total_additions', 0)}", Colors.NC)
     print_color(f"   ➖ 删除行数: {stats.get('total_deletions', 0)}", Colors.NC)
-    print_color(f"   🖼️ 图片贡献: {stats.get('image_count', 0)}", Colors.NC)
+    print_color(f"   🖼️ 图片数量: {stats.get('total_images', 0)}", Colors.NC)
+    print_color(f"   🕒 更新时间: {current_time}", Colors.NC)
     return True
 
 
@@ -795,7 +869,7 @@ def main():
 
     # 检查 TOKEN
     if not TOKEN:
-        print_color("❌ 错误: GITHUB_TOKEN 环境变量未设置", Colors.RED)
+        print_color("❌ 错误: GH_TOKEN 环境变量未设置", Colors.RED)
         return 1
 
     # 获取仓库列表
