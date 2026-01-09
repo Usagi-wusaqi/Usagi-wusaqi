@@ -1,5 +1,9 @@
 {
   "_metadata": {
+    "total_commits": 36,
+    "total_additions": 4260,
+    "total_deletions": 1213,
+    "total_images": 100
   },
   "data": {
     "ZenlessZoneZero-OneDragon": [
@@ -258,6 +262,38 @@
         "deletions": 16,
         "images": 0,
         "timestamp": "2026-01-01T18:08:26Z"
+      },
+      {
+        "index": 33,
+        "url": "https://github.com/Usagi-wusaqi/ZenlessZoneZero-OneDragon/commit/9fee9e10d0e0e7263d68f255332e8a7d9bbba4b1",
+        "additions": 72,
+        "deletions": 74,
+        "images": 0,
+        "timestamp": "2026-01-02T13:21:27Z"
+      },
+      {
+        "index": 34,
+        "url": "https://github.com/Usagi-wusaqi/ZenlessZoneZero-OneDragon/commit/eebf614be8e7d558cd1f420508cd610c55722a22",
+        "additions": 879,
+        "deletions": 0,
+        "images": 20,
+        "timestamp": "2026-01-03T15:57:28Z"
+      },
+      {
+        "index": 35,
+        "url": "https://github.com/Usagi-wusaqi/ZenlessZoneZero-OneDragon/commit/67b7498facd63d186fd20ded6fe1430d808dd2aa",
+        "additions": 86,
+        "deletions": 19,
+        "images": 0,
+        "timestamp": "2026-01-08T10:02:58Z"
+      },
+      {
+        "index": 36,
+        "url": "https://github.com/Usagi-wusaqi/ZenlessZoneZero-OneDragon/commit/c81cc07b5471d74682881a0a8c38811d18f35522",
+        "additions": 9,
+        "deletions": 11,
+        "images": 0,
+        "timestamp": "2026-01-08T15:23:09Z"
       }
     ]
   }
