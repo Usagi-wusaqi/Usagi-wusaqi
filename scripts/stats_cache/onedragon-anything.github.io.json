@@ -1,8 +1,8 @@
 {
   "_metadata": {
-    "total_commits": 9,
-    "total_additions": 920,
-    "total_deletions": 692,
+    "total_commits": 15,
+    "total_additions": 1106,
+    "total_deletions": 903,
     "total_images": 8
   },
   "data": {
@@ -78,6 +78,54 @@
         "deletions": 1,
         "images": 0,
         "timestamp": "2025-12-14T16:20:02Z"
+      },
+      {
+        "index": 10,
+        "url": "https://github.com/Usagi-wusaqi/onedragon-anything.github.io/commit/3fc627916378d656becb8497878bf7eb684f77e7",
+        "additions": 2,
+        "deletions": 0,
+        "images": 0,
+        "timestamp": "2026-01-14T13:31:17Z"
+      },
+      {
+        "index": 11,
+        "url": "https://github.com/Usagi-wusaqi/onedragon-anything.github.io/commit/139aa54d39bf7ea425d320833cb4d2581412ab20",
+        "additions": 14,
+        "deletions": 5,
+        "images": 0,
+        "timestamp": "2026-01-20T05:36:12Z"
+      },
+      {
+        "index": 12,
+        "url": "https://github.com/Usagi-wusaqi/onedragon-anything.github.io/commit/e323eb260b756628295b821427fee3eb92e72948",
+        "additions": 90,
+        "deletions": 108,
+        "images": 0,
+        "timestamp": "2026-01-23T15:23:29Z"
+      },
+      {
+        "index": 13,
+        "url": "https://github.com/Usagi-wusaqi/onedragon-anything.github.io/commit/8094aaac4fa097eda6e5e52e52e6b2150972b43f",
+        "additions": 18,
+        "deletions": 10,
+        "images": 0,
+        "timestamp": "2026-01-23T15:25:24Z"
+      },
+      {
+        "index": 14,
+        "url": "https://github.com/Usagi-wusaqi/onedragon-anything.github.io/commit/4dd5f38e8d55c4ab4865108b94559f0f9f7b08ed",
+        "additions": 2,
+        "deletions": 21,
+        "images": 0,
+        "timestamp": "2026-01-23T15:25:56Z"
+      },
+      {
+        "index": 15,
+        "url": "https://github.com/Usagi-wusaqi/onedragon-anything.github.io/commit/8508dfaefecca076810a04933c3270aca37b6ee1",
+        "additions": 60,
+        "deletions": 67,
+        "images": 0,
+        "timestamp": "2026-01-23T15:44:46Z"
       }
     ]
   }
