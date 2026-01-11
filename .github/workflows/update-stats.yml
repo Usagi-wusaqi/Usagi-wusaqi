@@ -1,9 +1,12 @@
-name: Update README Stats on Push
+name: Update README Stats
 
 on:
   push:
     branches: [ main, master ]
   workflow_dispatch:
+  schedule:
+    # Run weekly on Sunday at 00:00 UTC
+    - cron: '0 0 * * 0'
 
 permissions:
   contents: write
@@ -11,27 +14,138 @@ permissions:
 jobs:
   update-stats:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0  # Fetch full history for better git log analysis
 
       - name: Setup Python
         uses: actions/setup-python@v5.3.0
         with:
-          python-version: '3.x'
+          python-version: '3.11'
+
+      - name: Install jq for JSON processing
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Verify script exists
+        run: |
+          if [ ! -f "scripts/generate-stats.py" ]; then
+            echo "❌ Error: scripts/generate-stats.py not found"
+            exit 1
+          fi
+          echo "✅ Script found"
+
+      - name: Set Upstream Creator
+        id: set-creator
+        run: |
+          echo "🔍 Detecting repository type..."
+
+          # Check if this is a fork by querying the GitHub API safely
+          REPO_INFO=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}")
+
+          IS_FORK=$(echo "$REPO_INFO" | jq -r '.fork // false')
+
+          if [ "$IS_FORK" = "true" ]; then
+            # Try to get parent repository owner
+            UPSTREAM_CREATOR=$(echo "$REPO_INFO" | jq -r '.parent.owner.login // .source.owner.login // empty')
+
+            if [ -n "$UPSTREAM_CREATOR" ] && [ "$UPSTREAM_CREATOR" != "null" ]; then
+              echo "🍴 Fork repository detected"
+              echo "👑 Original creator: $UPSTREAM_CREATOR"
+            else
+              UPSTREAM_CREATOR="${{ github.repository_owner }}"
+              echo "📦 Fork repository but using current owner as fallback"
+            fi
+          else
+            UPSTREAM_CREATOR="${{ github.repository_owner }}"
+            echo "📦 Original repository detected"
+          fi
+
+          echo "UPSTREAM_CREATOR=$UPSTREAM_CREATOR" >> $GITHUB_OUTPUT
+          echo "👑 Final upstream creator: $UPSTREAM_CREATOR"
 
       - name: Generate Stats
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # 使用 GITHUB_TOKEN 避免 PAT 无效问题
-          USERNAME: ${{ github.repository_owner }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_USERNAME: ${{ github.repository_owner }}
+          UPSTREAM_CREATOR: ${{ steps.set-creator.outputs.UPSTREAM_CREATOR }}
         run: |
-          python3 scripts/generate-stats.py
+          echo "🚀 Starting statistics generation..."
+          echo "👤 Target user: $GITHUB_USERNAME"
+          echo "👑 Original creator: $UPSTREAM_CREATOR"
+          echo "📊 Repository: ${{ github.repository }}"
+
+          # Validate environment variables
+          if [ -z "$GH_TOKEN" ]; then
+            echo "❌ Error: GH_TOKEN is not set"
+            exit 1
+          fi
+
+          if [ -z "$GITHUB_USERNAME" ]; then
+            echo "❌ Error: GITHUB_USERNAME is not set"
+            exit 1
+          fi
+
+          # Run the script with timeout and error handling
+          timeout 25m python3 scripts/generate-stats.py || {
+            echo "❌ Statistics generation failed or timed out"
+            echo "📋 Checking for partial results..."
+            if [ -f "README.md" ]; then
+              echo "✅ README.md exists, checking for changes..."
+              git diff --name-only
+            fi
+            exit 1
+          }
+
+          echo "✅ Statistics generated successfully"
+
+      - name: Check for changes
+        id: check-changes
+        run: |
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "changes=false" >> $GITHUB_OUTPUT
+            echo "ℹ️  No changes detected"
+          else
+            echo "changes=true" >> $GITHUB_OUTPUT
+            echo "📝 Changes detected:"
+            git diff --name-only
+          fi
 
       - name: Commit and Push
+        if: steps.check-changes.outputs.changes == 'true'
         run: |
+          echo "📤 Committing and pushing changes..."
+
+          # Configure git
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Add changes
           git add README.md scripts/stats_cache/
-          git diff --quiet && git diff --staged --quiet || git commit -m "Update stats (auto)" -m "Co-authored-by: Usagi-wusaqi <2181802336@qq.com>"
-          git push
+
+          # Create commit with co-author
+          git commit \
+            -m "📊 Update stats (auto)" \
+            -m "Co-authored-by: ${{ steps.set-creator.outputs.UPSTREAM_CREATOR }} <${{ steps.set-creator.outputs.UPSTREAM_CREATOR }}@users.noreply.github.com>"
+
+          # Push changes
+          if git push; then
+            echo "✅ Changes pushed successfully"
+          else
+            echo "❌ Failed to push changes"
+            exit 1
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "📋 Workflow Summary:"
+          echo "- Repository: ${{ github.repository }}"
+          echo "- Trigger: ${{ github.event_name }}"
+          echo "- Target user: ${{ github.repository_owner }}"
+          echo "- Original creator: ${{ steps.set-creator.outputs.UPSTREAM_CREATOR }}"
+          echo "- Changes made: ${{ steps.check-changes.outputs.changes || 'unknown' }}"

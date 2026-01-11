@@ -1,25 +1,60 @@
-# GitHub 贡献统计脚本 - 详细说明
+# GitHub 贡献统计脚本
 
 ## 📋 目录
 
 1. [快速开始](#快速开始)
-2. [核心特性](#核心特性)
-3. [输出说明](#输出说明)
-4. [工作原理](#工作原理)
-5. [性能优化](#性能优化)
-6. [常见问题](#常见问题)
+2. [模板系统](#模板系统)
+3. [核心特性](#核心特性)
+4. [配置说明](#配置说明)
+5. [故障排除](#故障排除)
 
 ---
 
 ## 🚀 快速开始
 
-### 基本使用
-```bash
-# 设置环境变量
-export USERNAME="your-username"
-export GH_TOKEN="your-github-token"
+### Fork 用户（推荐）
 
-# 运行脚本
+1. **Fork 仓库** - 点击右上角 "Fork" 按钮
+2. **设置 GitHub Token**
+   - 访问 [GitHub Settings > Personal access tokens](https://github.com/settings/tokens)
+   - 生成新 token，选择 `repo` + `read:user` 权限
+3. **配置 Secret**
+   - 仓库 `Settings > Secrets and variables > Actions`
+   - 添加 `GH_TOKEN`，值为你的 token
+4. **触发更新**
+
+   **方式一：推送代码自动触发**
+   ```bash
+   git add .
+   git commit -m "Update content"
+   git push
+   ```
+
+   **方式二：手动触发**
+   - 进入仓库的 `Actions` 标签页
+   - 选择 "Update README Stats on Push" 工作流
+   - 点击 "Run workflow" 按钮
+   - 在弹出的对话框中点击绿色的 "Run workflow" 按钮
+   - 等待几分钟，工作流完成后 README.md 会自动更新
+
+   **方式三：定时触发**
+   - 已默认配置每周日零点整自动运行 (UTC时间)
+   - 无需手动操作，系统会自动更新统计数据
+   - 工作流可以配置为定时运行（如每天或每周）
+   - 在 `.github/workflows/` 中的 YAML 文件里添加 `schedule` 触发器：
+   ```yaml
+   on:
+     push:
+       branches: [ main ]
+     workflow_dispatch:
+     schedule:
+       - cron: '0 0 * * 0'  # 默认每周日零点整触发 (UTC时间)
+   ```
+
+### 本地运行
+
+```bash
+export GH_TOKEN="your-github-token"
 python scripts/generate-stats.py
 
 # 可选参数
@@ -27,173 +62,287 @@ python scripts/generate-stats.py --no-images    # 不统计图片
 python scripts/generate-stats.py --clear-cache  # 清除缓存
 ```
 
-### 输出结果
-- 更新 README.md 中的统计数字
-- 更新 README.md 右下角的时间戳
-- 生成/更新缓存文件到 `scripts/stats_cache/`
+---
+
+## 🎯 模板系统
+
+### 工作原理
+
+使用智能模板系统解决"占位符一次性替换"问题：
+
+1. **模板文件** (`README.template.md`) - 包含占位符的源文件
+2. **脚本运行** - 从模板生成完整 README，替换所有占位符
+3. **生成结果** (`README.md`) - 包含真实数据的最终文件
+
+### 解决的核心问题
+
+#### 传统方式的问题
+- ❌ **一次性替换**：`{{ORIGIN_USERNAME}}` → `your-username`，下次运行找不到占位符
+- ❌ **维护困难**：每个链接都要手动修改用户名
+- ❌ **服务不兼容**：GitHub stats 看到占位符无法识别
+
+#### 模板系统的优势
+- ✅ **可重复运行**：每次从模板开始，永远有占位符可替换
+- ✅ **维护简单**：只需在模板中使用占位符，自动替换所有位置
+- ✅ **服务兼容**：生成真实链接，GitHub stats 正常工作
+
+### 支持的占位符
+
+| 占位符 | 说明 | 示例 |
+| ------ | ---- | ---- |
+| `{{ORIGIN_USERNAME}}` | 当前用户名 | `your-username` |
+| `{{UPSTREAM_CREATOR}}` | 上游创建者 | `creator-username` |
+| `{{TOTAL_ADDITIONS}}` | 总增加行数 | `15316` |
+| `{{TOTAL_DELETIONS}}` | 总删除行数 | `4231` |
+| `{{TOTAL_IMAGES}}` | 总图片数量 | `109` |
+| `{{LAST_UPDATED}}` | 最后更新时间 | `2026-01-11 15:30:45 UTC+8` |
+
+### 使用示例
+
+**模板文件内容：**
+```markdown
+# {{ORIGIN_USERNAME}} 的项目
+
+![Stats](https://github-readme-stats.vercel.app/api?username={{ORIGIN_USERNAME}})
+
+统计数据：➕additions: {{TOTAL_ADDITIONS}} ➖deletions: {{TOTAL_DELETIONS}}
+
+最后更新：{{LAST_UPDATED}}
+```
+
+**生成的结果：**
+```markdown
+# your-username 的项目
+
+![Stats](https://github-readme-stats.vercel.app/api?username=your-username)
+
+统计数据：➕additions: 15316 ➖deletions: 4231
+
+最后更新：2026-01-11 15:30:45 UTC+8
+```
 
 ---
 
 ## ⭐ 核心特性
 
-### 1. 智能缓存系统
-- **高效率**：缓存命中率通常 95%+
-- **智能清理**：只删除被变基的 commits，保留历史数据
-- **增量更新**：只处理新增的 commits
+### 🚀 自动化与智能化
+- **GitHub Actions 集成** - 推送代码或手动触发自动更新
+- **智能缓存系统** - 95%+ 缓存命中率，显著提升运行速度
+- **增量更新** - 只处理新增的 commits，避免重复分析
+- **智能清理** - 检测变基操作，只删除消失的 commits
 
-### 2. 双数据源策略
-- **git log**：本地完整历史（可能不是最新）
-- **GitHub API**：远程最新数据（最多 1000 个 commits）
-- **智能合并**：自动选择最新的数据
+### 📊 全面的数据统计
+- **代码贡献** - 统计所有仓库的代码增删行数
+- **图片资源** - 统计图片文件（.png, .jpg, .gif, .svg, .webp, .ico, .bmp）
+- **双数据源** - 结合本地 git log 和 GitHub API，确保数据完整性
+- **实时更新** - 自动更新 README 中的统计数字和时间戳
 
-### 3. Fork 仓库支持
-- 自动检测 Fork 仓库
-- 分析上游仓库而不是 Fork 本身
-- 正确统计对原项目的贡献
+### 🍴 Fork 友好设计
+- **自动检测** - 智能识别 Fork 仓库，分析上游仓库而不是 Fork 本身
+- **用户名管理** - 通过占位符系统，任何人 Fork 后都能正常使用
+- **独立缓存** - 每个用户有自己的缓存文件，互不干扰
+- **上游创建者保留** - 在"Made with ❤️ by"部分保留上游创建者信息
 
-### 4. 格式保持
-- 使用正则表达式精确替换数字
-- 完全保持 README.md 原有格式
-- 不会破坏 HTML 结构或样式
-
----
-
-## 📊 输出说明
-
-### README.md 更新内容
-脚本会自动更新 README.md 中的两个地方：
-
-1. **统计数字**：`➕additions: 0 ➖deletions: 0 🖼️images: 0`
-2. **更新时间**：`Last updated: 2026-01-09 17:30:00 UTC+8`（右下角）
-
-### 缓存文件
-- **位置**：`scripts/stats_cache/{repo_name}.json`
-- **内容**：每个仓库的 commit 贡献数据
-- **作用**：避免重复分析，大幅提升性能
-
-### 统计规则
-- **代码行数**：统计所有文件的增删行数
-- **图片统计**：只统计新增图片（.png, .jpg, .gif, .svg 等）
-- **Fork 仓库**：自动分析上游仓库而不是 Fork 本身
+### 🔧 技术优势
+- **零依赖** - 只使用 Python 标准库，无需额外安装
+- **容错性强** - API 失败时自动降级使用 git log
+- **格式保持** - 精确替换统计数字，完全保持 README 原有格式
+- **向后兼容** - 支持新旧缓存格式自动转换
 
 ---
 
-## ⚙️ 工作原理
+## 🔧 配置说明
 
-### 执行流程
-```
-1. 获取仓库列表 (GitHub API)
-   ↓
-2. 处理每个仓库
-   ├─ 克隆/更新本地仓库
-   ├─ 检查是否为 Fork
-   └─ 分析 commits
-       ├─ 加载缓存
-       ├─ 获取 git log commits
-       ├─ 获取 API commits
-       ├─ 合并数据源
-       ├─ 清理过期缓存
-       ├─ 处理新 commits
-       └─ 保存缓存
-   ↓
-3. 更新 README.md
-   ├─ 替换统计数字
-   └─ 替换更新时间
+### 环境变量
+
+| 变量名 | 必需 | 默认值 | 说明 |
+| ------ | ---- | ------ | ---- |
+| `GH_TOKEN` | ✅ | 无 | GitHub Personal Access Token |
+| `GITHUB_USERNAME` | ❌ | 自动检测 | 当前用户名（统计目标） |
+| `UPSTREAM_CREATOR` | ❌ | 自动检测 | 上游创建者用户名（显示在"Made by"） |
+
+### GitHub Actions 自动设置
+
+在 GitHub Actions 环境中，变量会自动设置：
+
+```yaml
+GITHUB_USERNAME: ${{ github.repository_owner }}    # 当前仓库所有者
+UPSTREAM_CREATOR: ${{ 上游创建者 }}               # Fork 时自动检测
 ```
 
-### 数据合并策略
-当 git log 和 API 都有相同 commit 时：
-- 比较时间戳
-- 使用较新的数据
-- 时间戳相同时优先使用 git log
+### Fork 行为详解
 
-### 缓存清理逻辑
-- **保留**：比当前最老数据更久远的 commits（永久历史）
-- **删除**：在当前数据范围内消失的 commits（被变基）
+当有人 Fork 仓库并运行工作流时：
 
----
+- ✅ **动态替换占位符** - 运行时将 `{{ORIGIN_USERNAME}}` 替换为实际用户名
+- ✅ **保留上游创建者信息** - `UPSTREAM_CREATOR = 上游创建者`
+- ✅ **独立缓存文件** - 每个用户有自己的缓存，互不干扰
+- ✅ **可重复运行** - 不会出现占位符消失问题
 
-## 💾 性能优化
+### 模板系统工作流程
 
-### 缓存机制
-- **第一次运行**：需要分析所有历史 commits（较慢）
-- **后续运行**：95%+ 缓存命中率（很快）
-- **智能清理**：自动保留历史数据，删除过期缓存
+1. **检测模板** - 脚本首先检查是否存在 `README.template.md`
+2. **从模板生成** - 如果存在模板，从模板开始生成完整的 README
+3. **替换所有占位符** - 将所有占位符替换为实际值
+4. **生成最终 README** - 写入 `README.md`，包含真实数据
 
 ### 性能表现
-```
-第一次运行：可能需要几分钟（取决于仓库数量和 commit 数）
-第二次运行：通常 30 秒内完成
-长期使用：每次运行越来越快
-```
 
-### 优化建议
-- 保持缓存文件完整，不要手动删除
-- 定期运行脚本，避免积累太多新 commits
-- 网络良好时运行，减少 API 调用失败
+| 场景 | 预期时间 | 说明 |
+| ---- | -------- | ---- |
+| 首次运行 | 2-10 分钟 | 取决于仓库数量和 commit 历史 |
+| 日常更新 | 30-60 秒 | 95%+ 缓存命中率 |
+| 清除缓存后 | 2-10 分钟 | 需要重新分析所有数据 |
+| API 限流时 | 1-3 分钟 | 降级使用 git log |
 
 ---
 
-## ❓ 常见问题
+## � 技术原理
 
-### Q1：脚本运行很慢怎么办？
-**可能原因**：
-- 第一次运行需要分析所有历史 commits
-- 缓存文件被删除，需要重新分析
+### 工作流程
+
+```text
+1. 初始化 → 2. 获取仓库列表 → 3. 处理每个仓库 → 4. 更新 README → 5. 清理
+   ↓              ↓                ↓               ↓            ↓
+环境变量配置    GitHub API      智能缓存+分析    正则替换     临时文件清理
+```
+
+### 数据源策略
+
+- **本地 git log** - 完整历史数据（可能不是最新）
+- **GitHub API** - 远程最新数据（最多 1000 个 commits）
+- **智能合并** - 比较时间戳，选择最新数据；API 失败时降级使用 git log
+
+### 缓存机制
+
+- **增量处理** - 只分析新增的 commits，避免重复分析
+- **智能清理** - 检测变基操作，只删除消失的 commits
+- **永久保存** - 保留比当前最老 commit 更久远的历史数据
+- **格式兼容** - 自动处理新旧缓存格式转换
+
+### Fork 处理逻辑
+
+1. **检测 Fork** - 通过 `fork` 字段和 `source`/`parent` 信息
+2. **获取上游** - 提取上游仓库的 owner 和 name
+3. **切换目标** - 分析上游仓库而不是 Fork 本身
+4. **保持归属** - 统计数据仍归属于当前用户
+
+---
+
+## 🐛 故障排除
+
+### 常见问题速查
+
+**Q: 统计没有更新？**
+- 检查 GitHub Actions 是否成功运行
+- 确认 `GH_TOKEN` 设置正确
+- 查看 Actions 日志中的错误信息
+
+**Q: 统计数据不准确？**
+- 首次运行需要几分钟分析历史数据
+- Fork 仓库会自动分析上游仓库
+- 可以手动触发工作流重新统计
+
+**Q: 脚本运行失败？**
+- 检查 token 权限是否足够（需要 `repo` + `read:user`）
+- 确认网络连接正常
+- 查看详细错误日志
+
+### 详细问题解决
+
+#### 脚本运行很慢
+
+**可能原因：**
+- 首次运行需要分析所有历史 commits
+- 缓存文件被删除或损坏
 - 网络连接慢，API 调用超时
 
-**解决方法**：
+**解决方法：**
 ```bash
-# 检查缓存文件是否存在
+# 检查缓存文件状态
 ls -la scripts/stats_cache/
 
-# 第一次运行耐心等待，后续会很快（95%+ 缓存命中率）
+# 查看缓存统计信息（会显示缓存命中率）
 python scripts/generate-stats.py
+
+# 首次运行耐心等待，后续会很快（95%+ 缓存命中率）
 ```
 
-### Q2：GitHub API 调用失败
-**可能原因**：
-- TOKEN 无效或过期
-- 网络连接问题
-- GitHub API 限流（每小时 5000 次）
+#### GitHub API 调用失败
 
-**解决方法**：
+**可能原因：**
+- `GH_TOKEN` 无效、过期或权限不足
+- 网络连接问题或防火墙阻拦
+- GitHub API 限流（每小时 5000 次调用）
+
+**解决方法：**
 ```bash
-# 检查 TOKEN 是否有效
-echo $GH_TOKEN
+# 检查 TOKEN 有效性
 curl -H "Authorization: token $GH_TOKEN" https://api.github.com/user
 
-# 等待限流恢复或使用 git log 降级模式
+# 检查 API 限流状态
+curl -H "Authorization: token $GH_TOKEN" https://api.github.com/rate_limit
+
+# 脚本会自动降级使用 git log，无需担心
 ```
 
-### Q3：统计数据与预期不符
-**可能原因**：
-- Fork 仓库统计了 Fork 而不是上游
-- 缓存数据过期或损坏
-- 某些 commits 被变基或删除
+#### Fork 后如何使用
 
-**解决方法**：
+**使用步骤：**
+1. **Fork 仓库**到你的账户
+2. **设置 GitHub Token**：在仓库设置中添加 `GH_TOKEN` secret
+3. **触发工作流**：推送代码或手动触发 GitHub Actions
+4. **自动更新**：脚本会自动更新为你的统计数据
+
+**预期行为：**
+- ✅ 模板系统：从 `README.template.md` 生成完整的 README
+- ✅ 占位符替换：所有占位符替换为实际值
+- ✅ 可重复运行：每次都从干净的模板开始，永不出错
+- ✅ 统计服务兼容：生成的链接包含真实用户名
+- ✅ 独立缓存：生成你自己的缓存文件
+
+### 调试方法
+
 ```bash
-# 清除缓存重新统计
-python scripts/generate-stats.py --clear-cache
+# 查看详细输出
 python scripts/generate-stats.py
 
-# 检查是否正确处理了 Fork 仓库
+# 清除缓存重新运行
+python scripts/generate-stats.py --clear-cache
+
+# 只统计代码，不统计图片
+python scripts/generate-stats.py --no-images
+
+# 显示帮助信息
+python scripts/generate-stats.py --help
 ```
 
-### Q4：README.md 没有更新
-**可能原因**：
-- README.md 格式与脚本期望的不匹配
-- 正则表达式匹配失败
-- 文件权限问题
+### 支持的图片格式
 
-**解决方法**：
-- 确保 README.md 包含：`➕additions: 数字 ➖deletions: 数字 🖼️images: 数字`
-- 确保包含：`Last updated: YYYY-MM-DD HH:MM:SS UTC+8`
-- 检查文件是否可写
+**支持的格式：**
+- 常见格式：`.png`, `.jpg`, `.jpeg`, `.gif`
+- 矢量格式：`.svg`
+- 其他格式：`.bmp`, `.webp`, `.ico`
 
-### Q5：如何提高脚本性能？
-**优化建议**：
-- 保持缓存文件完整（不要手动删除）
-- 定期运行脚本，避免积累太多新 commits
-- 网络良好时运行，减少 API 调用失败
+**统计规则：**
+- 只统计**新增**的图片文件（status = 'added'）
+- 不统计修改或删除的图片
+- 通过文件扩展名判断（不区分大小写）
+
+### 获取帮助
+
+- 在 Issues 中提问
+- 查看 GitHub Actions 运行日志
+- 检查环境变量和权限配置
+
+---
+
+## 📄 许可证
+
+本项目采用 [MIT License](LICENSE) 开源协议。
+
+**你可以：**
+- ✅ 商业使用、修改代码、分发代码、私人使用
+
+**要求：**
+- 📋 保留原始的版权声明和许可证文本
