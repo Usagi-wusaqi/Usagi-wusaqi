@@ -1,9 +1,20 @@
+<!--
+ORIGIN_USERNAME = Usagi-wusaqi
+UPSTREAM_CREATOR = Usagi-wusaqi
+
+模板说明：
+- 这是 README 的模板文件，包含占位符
+- 脚本会从这个模板生成最终的 README.md
+- 这样确保每次运行都能正确替换占位符
+-->
+
 <div align="center">
 
-  <h3>Hello, world! I'm Usagi-wusaqi!</h3>
+  <h1>Hello, world!</h1>
 
   <p>
-    <img src="https://komarev.com/ghpvc/?username=Usagi-wusaqi&style=flat-square&color=blue" alt=""/>
+    <img src="https://komarev.com/ghpvc/?username=Usagi-wusaqi&style=flat-square&color=blue" alt="Profile Views"/>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"/></a>
   </p>
 
 </div>
@@ -26,7 +37,10 @@ I'm a code enthusiast who loves turning ideas into reality through code. With a 
 
 <table align="center">
   <tr>
-    <td align="center" style="vertical-align: top;">➕additions: 15316 ➖deletions: 4231 🖼️images: 109</td>
+    <td align="center" style="vertical-align: top;">
+      ➕additions: 16155 ➖deletions: 4507 🖼️images: 109<br>
+      <small><em>Last updated: 2026-01-12 01:02:56 UTC+8</em></small>
+    </td>
     <td align="center" style="vertical-align: top;" rowspan="2">
       <img src="https://github-readme-stats-navy-six-17.vercel.app/api/top-langs?username=Usagi-wusaqi&show_icons=true&locale=en&layout=donut&include_all_commits=true&langs_count=100&hide_border=false&disable_animations=false&cache_seconds=300" alt="Languages" width="400px" />
     </td>
@@ -61,9 +75,5 @@ I'm a code enthusiast who loves turning ideas into reality through code. With a 
   <p>
     Made with ❤️ by <a href="https://github.com/Usagi-wusaqi">Usagi-wusaqi</a>
   </p>
-
-  <div align="right">
-    <small><em>Last updated: 2026-01-09 18:06:47 UTC+8</em></small>
-  </div>
 
 </div>
