@@ -38,8 +38,8 @@ I'm a code enthusiast who loves turning ideas into reality through code. With a 
 <table align="center">
   <tr>
     <td align="center" style="vertical-align: top;">
-      ➕additions: 16248 ➖deletions: 4612 🖼️images: 109<br>
-      <small><em>Last updated: 2026-01-18 08:25:59 UTC+8</em></small>
+      ➕additions: 16530 ➖deletions: 4739 🖼️images: 109<br>
+      <small><em>Last updated: 2026-01-25 08:26:17 UTC+8</em></small>
     </td>
     <td align="center" style="vertical-align: top;" rowspan="2">
       <img src="https://github-readme-stats-navy-six-17.vercel.app/api/top-langs?username=Usagi-wusaqi&show_icons=true&locale=en&layout=donut&include_all_commits=true&langs_count=100&hide_border=false&disable_animations=false&cache_seconds=300" alt="Languages" width="400px" />
