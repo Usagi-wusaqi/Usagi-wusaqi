@@ -1,9 +1,9 @@
 <!--
 ORIGIN_USERNAME = {{ORIGIN_USERNAME}}
-UPSTREAM_CREATOR = {{UPSTREAM_CREATOR}}
+UPSTREAM_USERNAME = {{UPSTREAM_USERNAME}}
 
 模板说明：
-- 这是 README 的模板文件，包含占位符
+- README.template.md 模板文件，包含占位符
 - 脚本会从这个模板生成最终的 README.md
 - 这样确保每次运行都能正确替换占位符
 -->
@@ -73,7 +73,7 @@ I'm a code enthusiast who loves turning ideas into reality through code. With a 
   </p>
 
   <p>
-    Made with ❤️ by <a href="https://github.com/{{UPSTREAM_CREATOR}}">{{UPSTREAM_CREATOR}}</a>
+    Made with ❤️ by <a href="https://github.com/{{UPSTREAM_USERNAME}}">{{UPSTREAM_USERNAME}}</a>
   </p>
 
 </div>
