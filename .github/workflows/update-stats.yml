@@ -1,11 +1,11 @@
-name: Update README Stats
+name: 更新 README 统计数据
 
 on:
   push:
     branches: [ main, master ]
   workflow_dispatch:
   schedule:
-    # Run weekly on Sunday at 00:00 UTC
+    # 每周日 UTC 00:00 运行
     - cron: '0 0 * * 0'
 
 permissions:
@@ -17,135 +17,188 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Checkout repository
+      # 检出代码仓库
+      - name: 检出代码仓库
         uses: actions/checkout@v4.2.2
         with:
-          fetch-depth: 0  # Fetch full history for better git log analysis
+          fetch-depth: 0  # 获取完整历史以便更好的 git log 分析
 
-      - name: Setup Python
-        uses: actions/setup-python@v5.3.0
-        with:
-          python-version: '3.11'
+      # 设置 Python 和 jq
+      - name: 设置 Python 和 jq
+        run: |
+          sudo apt-get update && sudo apt-get install -y jq
+          echo "✅ 依赖已安装"
 
-      - name: Install jq for JSON processing
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Verify script exists
+      # 验证脚本是否存在
+      - name: 验证脚本是否存在
         run: |
           if [ ! -f "scripts/generate-stats.py" ]; then
-            echo "❌ Error: scripts/generate-stats.py not found"
+            echo "❌ 错误: scripts/generate-stats.py 未找到"
             exit 1
           fi
-          echo "✅ Script found"
+          echo "✅ 脚本已找到"
 
-      - name: Set Upstream Creator
-        id: set-creator
+      # 确定目标用户和提交作者
+      - name: 确定目标用户和提交作者
+        id: determine-users
         run: |
-          echo "🔍 Detecting repository type..."
+          echo "🔍 正在确定统计目标和提交作者..."
 
-          # Check if this is a fork by querying the GitHub API safely
+          # 通过查询 GitHub API 检查是否为 Fork 仓库
           REPO_INFO=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}")
 
           IS_FORK=$(echo "$REPO_INFO" | jq -r '.fork // false')
 
           if [ "$IS_FORK" = "true" ]; then
-            # Try to get parent repository owner
-            UPSTREAM_CREATOR=$(echo "$REPO_INFO" | jq -r '.parent.owner.login // .source.owner.login // empty')
+            # 这是 Fork 仓库
+            ORIGIN_USERNAME="${{ github.repository_owner }}"
+            UPSTREAM_USERNAME=$(echo "$REPO_INFO" | jq -r '.parent.owner.login // .source.owner.login // empty')
 
-            if [ -n "$UPSTREAM_CREATOR" ] && [ "$UPSTREAM_CREATOR" != "null" ]; then
-              echo "🍴 Fork repository detected"
-              echo "👑 Original creator: $UPSTREAM_CREATOR"
+            if [ -n "$UPSTREAM_USERNAME" ] && [ "$UPSTREAM_USERNAME" != "null" ]; then
+              echo "🍴 检测到 Fork 仓库"
+              echo "👤 远端用户名: $ORIGIN_USERNAME"
+              echo "👑 上游用户名: $UPSTREAM_USERNAME"
             else
-              UPSTREAM_CREATOR="${{ github.repository_owner }}"
-              echo "📦 Fork repository but using current owner as fallback"
+              UPSTREAM_USERNAME="$ORIGIN_USERNAME"
+              echo "🍴 Fork 仓库但无法获取上游信息"
+              echo "👤 远端用户名: $ORIGIN_USERNAME"
+              echo "👑 上游用户名: $UPSTREAM_USERNAME"
             fi
           else
-            UPSTREAM_CREATOR="${{ github.repository_owner }}"
-            echo "📦 Original repository detected"
+            # 这是原始仓库
+            ORIGIN_USERNAME="${{ github.repository_owner }}"
+            UPSTREAM_USERNAME="${{ github.repository_owner }}"
+            echo "📦 检测到原始仓库"
+            echo "👤 远端用户名: $ORIGIN_USERNAME"
+            echo "👑 上游用户名: $UPSTREAM_USERNAME"
           fi
 
-          echo "UPSTREAM_CREATOR=$UPSTREAM_CREATOR" >> $GITHUB_OUTPUT
-          echo "👑 Final upstream creator: $UPSTREAM_CREATOR"
+          echo "ORIGIN_USERNAME=$ORIGIN_USERNAME" >> $GITHUB_OUTPUT
+          echo "UPSTREAM_USERNAME=$UPSTREAM_USERNAME" >> $GITHUB_OUTPUT
+          echo "✅ 用户已确定"
 
-      - name: Generate Stats
+          # 根据触发类型确定提交作者
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            # 定时任务，只有 GitHub Actions
+            echo "⏰ 检测到定时任务"
+            echo "co_authors=" >> $GITHUB_OUTPUT
+            echo "🤖 作者: GitHub Actions"
+          else
+            # 手动触发或 Push 触发，获取触发用户
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              echo "👆 检测到手动触发"
+              TRIGGER_USER="${{ github.triggering_actor }}"
+            else
+              echo "📝 检测到 Push 事件"
+              TRIGGER_USER="${{ github.actor }}"
+            fi
+
+            # 获取用户 ID 以生成正确的隐私邮箱
+            USER_INFO=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/users/$TRIGGER_USER")
+
+            USER_ID=$(echo "$USER_INFO" | jq -r '.id // null')
+
+            if [ -n "$USER_ID" ] && [ "$USER_ID" != "null" ]; then
+              PRIVACY_EMAIL="$USER_ID+$TRIGGER_USER@users.noreply.github.com"
+              echo "📧 使用带 ID 的隐私邮箱: $PRIVACY_EMAIL"
+            else
+              PRIVACY_EMAIL="$TRIGGER_USER@users.noreply.github.com"
+              echo "📧 使用无 ID 的隐私邮箱: $PRIVACY_EMAIL"
+            fi
+
+            echo "co_authors=Co-authored-by: $TRIGGER_USER <$PRIVACY_EMAIL>" >> $GITHUB_OUTPUT
+            echo "👤 作者: GitHub Actions + $TRIGGER_USER"
+          fi
+
+          echo "trigger_type=${{ github.event_name }}" >> $GITHUB_OUTPUT
+
+      # 生成统计数据
+      - name: 生成统计数据
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_USERNAME: ${{ github.repository_owner }}
-          UPSTREAM_CREATOR: ${{ steps.set-creator.outputs.UPSTREAM_CREATOR }}
+          ORIGIN_USERNAME: ${{ steps.determine-users.outputs.ORIGIN_USERNAME }}
+          UPSTREAM_USERNAME: ${{ steps.determine-users.outputs.UPSTREAM_USERNAME }}
         run: |
-          echo "🚀 Starting statistics generation..."
-          echo "👤 Target user: $GITHUB_USERNAME"
-          echo "👑 Original creator: $UPSTREAM_CREATOR"
-          echo "📊 Repository: ${{ github.repository }}"
+          echo "🚀 开始生成统计数据..."
+          echo "👤 目标用户: $ORIGIN_USERNAME"
+          echo "📊 仓库: ${{ github.repository }}"
 
-          # Validate environment variables
+          # 验证环境变量
           if [ -z "$GH_TOKEN" ]; then
-            echo "❌ Error: GH_TOKEN is not set"
+            echo "❌ 错误: GH_TOKEN 未设置"
             exit 1
           fi
 
-          if [ -z "$GITHUB_USERNAME" ]; then
-            echo "❌ Error: GITHUB_USERNAME is not set"
+          if [ -z "$ORIGIN_USERNAME" ]; then
+            echo "❌ 错误: ORIGIN_USERNAME 未设置"
             exit 1
           fi
 
-          # Run the script with timeout and error handling
+          # 运行脚本，带超时和错误处理
           timeout 25m python3 scripts/generate-stats.py || {
-            echo "❌ Statistics generation failed or timed out"
-            echo "📋 Checking for partial results..."
+            echo "❌ 统计生成失败或超时"
+            echo "📋 检查部分结果..."
             if [ -f "README.md" ]; then
-              echo "✅ README.md exists, checking for changes..."
+              echo "✅ README.md 存在，检查更改..."
               git diff --name-only
             fi
             exit 1
           }
 
-          echo "✅ Statistics generated successfully"
+          echo "✅ 统计数据生成成功"
 
-      - name: Check for changes
+      # 检查是否有更改
+      - name: 检查是否有更改
         id: check-changes
         run: |
-          if git diff --quiet && git diff --staged --quiet; then
+          if git diff --quiet && git diff --cached --quiet; then
             echo "changes=false" >> $GITHUB_OUTPUT
-            echo "ℹ️  No changes detected"
+            echo "ℹ️  未检测到更改"
           else
             echo "changes=true" >> $GITHUB_OUTPUT
-            echo "📝 Changes detected:"
+            echo "📝 检测到更改:"
             git diff --name-only
           fi
 
-      - name: Commit and Push
+      # 提交并推送
+      - name: 提交并推送
         if: steps.check-changes.outputs.changes == 'true'
         run: |
-          echo "📤 Committing and pushing changes..."
+          echo "📤 正在提交和推送更改..."
 
-          # Configure git
+          # 配置 git
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Add changes
+          # 添加更改
           git add README.md scripts/stats_cache/
 
-          # Create commit with co-author
-          git commit \
-            -m "📊 Update stats (auto)" \
-            -m "Co-authored-by: ${{ steps.set-creator.outputs.UPSTREAM_CREATOR }} <${{ steps.set-creator.outputs.UPSTREAM_CREATOR }}@users.noreply.github.com>"
-
-          # Push changes
-          if git push; then
-            echo "✅ Changes pushed successfully"
+          # 创建提交，带合作作者（如适用）
+          if [ -n "${{ steps.determine-users.outputs.co_authors }}" ]; then
+            git commit \
+              -m "📊 更新统计（自动）" \
+              -m "${{ steps.determine-users.outputs.co_authors }}"
           else
-            echo "❌ Failed to push changes"
+            git commit -m "📊 更新统计（自动）"
+          fi
+
+          # 推送更改
+          if git push; then
+            echo "✅ 更改推送成功"
+          else
+            echo "❌ 推送更改失败"
             exit 1
           fi
 
-      - name: Summary
+      # 摘要
+      - name: 摘要
         if: always()
         run: |
-          echo "📋 Workflow Summary:"
-          echo "- Repository: ${{ github.repository }}"
-          echo "- Trigger: ${{ github.event_name }}"
-          echo "- Target user: ${{ github.repository_owner }}"
-          echo "- Original creator: ${{ steps.set-creator.outputs.UPSTREAM_CREATOR }}"
-          echo "- Changes made: ${{ steps.check-changes.outputs.changes || 'unknown' }}"
+          echo "📋 工作流摘要:"
+          echo "- 仓库: ${{ github.repository }}"
+          echo "- 触发方式: ${{ github.event_name }}"
+          echo "- 远端用户名: ${{ steps.determine-users.outputs.ORIGIN_USERNAME }}"
+          echo "- 上游用户名: ${{ steps.determine-users.outputs.UPSTREAM_USERNAME }}"
+          echo "- 是否有更改: ${{ steps.check-changes.outputs.changes || 'unknown' }}"
