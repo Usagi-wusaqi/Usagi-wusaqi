@@ -1,9 +1,9 @@
 <!--
 ORIGIN_USERNAME = Usagi-wusaqi
-UPSTREAM_CREATOR = Usagi-wusaqi
+UPSTREAM_USERNAME = Usagi-wusaqi
 
 模板说明：
-- 这是 README 的模板文件，包含占位符
+- README.template.md 模板文件，包含占位符
 - 脚本会从这个模板生成最终的 README.md
 - 这样确保每次运行都能正确替换占位符
 -->
@@ -38,8 +38,8 @@ I'm a code enthusiast who loves turning ideas into reality through code. With a 
 <table align="center">
   <tr>
     <td align="center" style="vertical-align: top;">
-      ➕additions: 16530 ➖deletions: 4739 🖼️images: 109<br>
-      <small><em>Last updated: 2026-01-25 08:26:17 UTC+8</em></small>
+      ➕additions: 19014 ➖deletions: 7310 🖼️images: 109<br>
+      <small><em>Last updated: 2026-01-28 20:02:49 UTC+8</em></small>
     </td>
     <td align="center" style="vertical-align: top;" rowspan="2">
       <img src="https://github-readme-stats-navy-six-17.vercel.app/api/top-langs?username=Usagi-wusaqi&show_icons=true&locale=en&layout=donut&include_all_commits=true&langs_count=100&hide_border=false&disable_animations=false&cache_seconds=300" alt="Languages" width="400px" />

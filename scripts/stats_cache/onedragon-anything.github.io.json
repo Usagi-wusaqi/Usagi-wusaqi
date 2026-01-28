@@ -1,8 +1,8 @@
 {
   "_metadata": {
-    "total_commits": 15,
-    "total_additions": 1106,
-    "total_deletions": 903,
+    "total_commits": 22,
+    "total_additions": 3179,
+    "total_deletions": 3197,
     "total_images": 8
   },
   "data": {
@@ -121,11 +121,67 @@
       },
       {
         "index": 15,
-        "url": "https://github.com/Usagi-wusaqi/onedragon-anything.github.io/commit/8508dfaefecca076810a04933c3270aca37b6ee1",
+        "url": "https://github.com/Usagi-wusaqi/onedragon-anything.github.io/commit/367d4852bdde2cf6237eac15709cf58c5bac1d6a",
         "additions": 60,
         "deletions": 67,
         "images": 0,
-        "timestamp": "2026-01-23T15:44:46Z"
+        "timestamp": "2026-01-25T11:01:42Z"
+      },
+      {
+        "index": 16,
+        "url": "https://github.com/Usagi-wusaqi/onedragon-anything.github.io/commit/cdd522fa3f572c92aac56ed25adf1887bb99a584",
+        "additions": 9,
+        "deletions": 8,
+        "images": 0,
+        "timestamp": "2026-01-25T12:49:29Z"
+      },
+      {
+        "index": 17,
+        "url": "https://github.com/Usagi-wusaqi/onedragon-anything.github.io/commit/9347c2e3cd839fe20e7535a9b7ca6fd90976994d",
+        "additions": 48,
+        "deletions": 10,
+        "images": 0,
+        "timestamp": "2026-01-25T12:54:26Z"
+      },
+      {
+        "index": 18,
+        "url": "https://github.com/Usagi-wusaqi/onedragon-anything.github.io/commit/02358101c784a8151f56aaa8c35af4b6b44ed092",
+        "additions": 2,
+        "deletions": 2,
+        "images": 0,
+        "timestamp": "2026-01-25T13:01:28Z"
+      },
+      {
+        "index": 19,
+        "url": "https://github.com/Usagi-wusaqi/onedragon-anything.github.io/commit/bea511ca6eee99300e474c43e998f320882db8aa",
+        "additions": 65,
+        "deletions": 16,
+        "images": 0,
+        "timestamp": "2026-01-25T13:39:49Z"
+      },
+      {
+        "index": 20,
+        "url": "https://github.com/Usagi-wusaqi/onedragon-anything.github.io/commit/3957dab80d61aea23331addeb948b662df8db3ea",
+        "additions": 1946,
+        "deletions": 2256,
+        "images": 0,
+        "timestamp": "2026-01-25T13:42:02Z"
+      },
+      {
+        "index": 21,
+        "url": "https://github.com/Usagi-wusaqi/onedragon-anything.github.io/commit/3319b54323c612b80a3fd6c22930c04563ff9448",
+        "additions": 2,
+        "deletions": 1,
+        "images": 0,
+        "timestamp": "2026-01-25T13:50:37Z"
+      },
+      {
+        "index": 22,
+        "url": "https://github.com/Usagi-wusaqi/onedragon-anything.github.io/commit/6717a80334f554534de0ab793058a6ddce1c816f",
+        "additions": 1,
+        "deletions": 1,
+        "images": 0,
+        "timestamp": "2026-01-25T14:08:57Z"
       }
     ]
   }
