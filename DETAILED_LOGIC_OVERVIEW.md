@@ -32,7 +32,7 @@
 
    **方式二：手动触发**
    - 进入仓库的 `Actions` 标签页
-   - 选择 "Update README Stats on Push" 工作流
+   - 选择 "更新 README 统计数据" 工作流
    - 点击 "Run workflow" 按钮
    - 在弹出的对话框中点击绿色的 "Run workflow" 按钮
    - 等待几分钟，工作流完成后 README.md 会自动更新
@@ -91,11 +91,11 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存
 | 占位符 | 说明 | 示例 |
 | ------ | ---- | ---- |
 | `{{ORIGIN_USERNAME}}` | 当前用户名 | `your-username` |
-| `{{UPSTREAM_CREATOR}}` | 上游创建者 | `creator-username` |
+| `{{UPSTREAM_USERNAME}}` | 上游用户名 | `upstream-username` |
 | `{{TOTAL_ADDITIONS}}` | 总增加行数 | `15316` |
 | `{{TOTAL_DELETIONS}}` | 总删除行数 | `4231` |
 | `{{TOTAL_IMAGES}}` | 总图片数量 | `109` |
-| `{{LAST_UPDATED}}` | 最后更新时间 | `2026-01-11 15:30:45 UTC+8` |
+| `{{LAST_UPDATED}}` | 最后更新时间 | `2026-01-28 15:30:45 UTC+8` |
 
 ### 使用示例
 
@@ -118,7 +118,7 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存
 
 统计数据：➕additions: 15316 ➖deletions: 4231
 
-最后更新：2026-01-11 15:30:45 UTC+8
+最后更新：2026-01-28 15:30:45 UTC+8
 ```
 
 ---
@@ -158,26 +158,69 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存
 | 变量名 | 必需 | 默认值 | 说明 |
 | ------ | ---- | ------ | ---- |
 | `GH_TOKEN` | ✅ | 无 | GitHub Personal Access Token |
-| `GITHUB_USERNAME` | ❌ | 自动检测 | 当前用户名（统计目标） |
-| `UPSTREAM_CREATOR` | ❌ | 自动检测 | 上游创建者用户名（显示在"Made by"） |
+| `ORIGIN_USERNAME` | ❌ | 自动检测 | 远端用户名或当前用户名 |
+| `UPSTREAM_USERNAME` | ❌ | 自动检测 | 上游用户名 |
 
 ### GitHub Actions 自动设置
 
 在 GitHub Actions 环境中，变量会自动设置：
 
 ```yaml
-GITHUB_USERNAME: ${{ github.repository_owner }}    # 当前仓库所有者
-UPSTREAM_CREATOR: ${{ 上游创建者 }}               # Fork 时自动检测
+ORIGIN_USERNAME: ${{ 远端用户名或当前用户名 }}    # 远端用户名
+UPSTREAM_USERNAME: ${{ 上游用户名 }}                  # 上游用户名
 ```
+
+### 变量用途说明
+
+**ORIGIN_USERNAME（远端用户名）：**
+- Fork 仓库时：Fork 仓库（当前 Fork 的所有者）
+- 非 Fork 仓库时：和 UPSTREAM_USERNAME 一样（当前仓库所有者）
+- 用于 GitHub API 调用（获取仓库列表、commit 数据等）
+- 用于 GitHub Stats API（统计图表、语言分布等）
+
+**UPSTREAM_USERNAME（上游用户名）：**
+- 始终是上游用户名
+- Fork 仓库时：指向上游用户名
+- 非 Fork 仓库时：指向当前用户名
+- 用于"Made with ❤️ by"部分的作者链接
+
+**变量关系总结：**
+
+| 仓库类型 | ORIGIN_USERNAME | UPSTREAM_USERNAME |
+|---------|---------------|------------------|
+| Fork 仓库 | 远端用户名（当前 Fork 的所有者） | 上游用户名 |
+| 非 Fork 仓库 | 当前用户名 | 当前用户名 |
+
+脚本会按以下优先级初始化变量：
+
+**ORIGIN_USERNAME 优先级：**
+1. 环境变量 `ORIGIN_USERNAME`
+2. 从 README.md 读取 `ORIGIN_USERNAME = xxx`
+3. 空字符串（需要手动设置）
+
+**UPSTREAM_USERNAME 优先级：**
+1. 环境变量 `UPSTREAM_USERNAME`
+2. 从 README.md 读取 `UPSTREAM_USERNAME = xxx`
+3. 空字符串（需要手动设置）
+
+**注意：** 在 GitHub Actions 中，这两个变量会根据仓库类型自动设置。
 
 ### Fork 行为详解
 
 当有人 Fork 仓库并运行工作流时：
 
-- ✅ **动态替换占位符** - 运行时将 `{{ORIGIN_USERNAME}}` 替换为实际用户名
-- ✅ **保留上游创建者信息** - `UPSTREAM_CREATOR = 上游创建者`
+- ✅ **ORIGIN_USERNAME = 远端用户名** - 统计远端仓库的贡献
+- ✅ **UPSTREAM_USERNAME = 上游用户名** - 在"Made by"中显示上游作者
+- ✅ **动态替换占位符** - 运行时将占位符替换为实际用户名
 - ✅ **独立缓存文件** - 每个用户有自己的缓存，互不干扰
 - ✅ **可重复运行** - 不会出现占位符消失问题
+
+**变量关系总结：**
+
+| 仓库类型 | ORIGIN_USERNAME | UPSTREAM_USERNAME |
+|---------|---------------|------------------|
+| Fork 仓库 | 远端用户名（当前 Fork 的所有者） | 上游用户名 |
+| 非 Fork 仓库 | 当前用户名 | 当前用户名 |
 
 ### 模板系统工作流程
 
@@ -197,7 +240,7 @@ UPSTREAM_CREATOR: ${{ 上游创建者 }}               # Fork 时自动检测
 
 ---
 
-## � 技术原理
+## 🔬 技术原理
 
 ### 工作流程
 
@@ -226,6 +269,22 @@ UPSTREAM_CREATOR: ${{ 上游创建者 }}               # Fork 时自动检测
 2. **获取上游** - 提取上游仓库的 owner 和 name
 3. **切换目标** - 分析上游仓库而不是 Fork 本身
 4. **保持归属** - 统计数据仍归属于当前用户
+
+### 提交作者确定逻辑
+
+工作流会根据不同的触发方式确定提交作者：
+
+1. **定时任务** - 只有 GitHub Actions 作为作者
+2. **手动触发** - GitHub Actions + 触发者（使用隐私邮箱）
+3. **Push 事件** - GitHub Actions + 提交者（使用隐私邮箱）
+
+### 隐私邮箱格式
+
+GitHub 隐私邮箱的标准格式：`{id}+{username}@users.noreply.github.com`
+
+- **优先使用**：带 ID 的格式（更准确，避免改名后的问题）
+- **回退方案**：如果获取 ID 失败，使用 `{username}@users.noreply.github.com`
+- **自动获取**：通过 GitHub API 获取用户 ID，无需手动配置
 
 ---
 
