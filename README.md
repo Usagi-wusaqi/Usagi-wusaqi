@@ -3,9 +3,9 @@ ORIGIN_USERNAME = Usagi-wusaqi
 UPSTREAM_USERNAME = Usagi-wusaqi
 
 模板说明：
-- README.template.md 模板文件，包含占位符
-- 脚本会从这个模板生成最终的 README.md
-- 这样确保每次运行都能正确替换占位符
+- README.template.md 是模板文件，脚本会从中生成 README.md
+- 用户名占位符 Usagi-wusaqi / Usagi-wusaqi 由脚本自动替换
+- 作者身份由脚本自动从 API 学习，无需手动配置
 -->
 
 <div align="center">
@@ -38,8 +38,8 @@ I'm a code enthusiast who loves turning ideas into reality through code. With a 
 <table align="center">
   <tr>
     <td align="center" style="vertical-align: top;">
-      ➕additions: 19014 ➖deletions: 7310 🖼️images: 109<br>
-      <small><em>Last updated: 2026-01-28 20:02:49 UTC+8</em></small>
+      ➕additions: 14748 ➖deletions: 6504 🖼️images: 111<br>
+      <small><em>Last updated: 2026-02-01 19:05:26 UTC+8</em></small>
     </td>
     <td align="center" style="vertical-align: top;" rowspan="2">
       <img src="https://github-readme-stats-navy-six-17.vercel.app/api/top-langs?username=Usagi-wusaqi&show_icons=true&locale=en&layout=donut&include_all_commits=true&langs_count=100&hide_border=false&disable_animations=false&cache_seconds=300" alt="Languages" width="400px" />

@@ -1,0 +1,116 @@
+{
+  "_metadata": {
+    "total_commits": 13,
+    "total_additions": 5173,
+    "total_deletions": 4276,
+    "total_images": 0
+  },
+  "data": {
+    "Usagi-wusaqi": [
+      {
+        "index": 1,
+        "url": "https://github.com/Usagi-wusaqi/Usagi-wusaqi/commit/ff1b6dad80a7b3a3bb6d979601fd4b3386ace2d8",
+        "additions": 220,
+        "deletions": 0,
+        "images": 0,
+        "timestamp": "2025-12-27T14:50:28+08:00"
+      },
+      {
+        "index": 2,
+        "url": "https://github.com/Usagi-wusaqi/Usagi-wusaqi/commit/f2837514970ba0a965252aba09f8decccc86f6da",
+        "additions": 17,
+        "deletions": 175,
+        "images": 0,
+        "timestamp": "2025-12-27T16:14:16+08:00"
+      },
+      {
+        "index": 3,
+        "url": "https://github.com/Usagi-wusaqi/Usagi-wusaqi/commit/9bac2f7979fcc46e5cf0820153a639ec65d418e4",
+        "additions": 2,
+        "deletions": 2,
+        "images": 0,
+        "timestamp": "2025-12-27T18:51:02+08:00"
+      },
+      {
+        "index": 4,
+        "url": "https://github.com/Usagi-wusaqi/Usagi-wusaqi/commit/3f880280e10bb420854e0b5fe888f5e499d9c7a2",
+        "additions": 616,
+        "deletions": 4,
+        "images": 0,
+        "timestamp": "2025-12-28T18:00:56+08:00"
+      },
+      {
+        "index": 5,
+        "url": "https://github.com/Usagi-wusaqi/Usagi-wusaqi/commit/354e19408f21ffadba55a2e3c3a479998ea0061d",
+        "additions": 74,
+        "deletions": 454,
+        "images": 0,
+        "timestamp": "2025-12-28T19:21:39+08:00"
+      },
+      {
+        "index": 6,
+        "url": "https://github.com/Usagi-wusaqi/Usagi-wusaqi/commit/fc383b2d96c354ec2fa475ffe5141c8d6c4ae8a2",
+        "additions": 1467,
+        "deletions": 685,
+        "images": 0,
+        "timestamp": "2026-01-02T15:23:58+08:00"
+      },
+      {
+        "index": 7,
+        "url": "https://github.com/Usagi-wusaqi/Usagi-wusaqi/commit/524c48ce164a7ecf931e86cb908576e843e1812c",
+        "additions": 357,
+        "deletions": 977,
+        "images": 0,
+        "timestamp": "2026-01-09T18:05:28+08:00"
+      },
+      {
+        "index": 8,
+        "url": "https://github.com/Usagi-wusaqi/Usagi-wusaqi/commit/f92d5c0c583a2e90320ea860629be50eae13ec20",
+        "additions": 839,
+        "deletions": 276,
+        "images": 0,
+        "timestamp": "2026-01-12T01:01:28+08:00"
+      },
+      {
+        "index": 9,
+        "url": "https://github.com/Usagi-wusaqi/Usagi-wusaqi/commit/bcd6d394576c954a423eb7360a764e1ffa2e5ffc",
+        "additions": 337,
+        "deletions": 262,
+        "images": 0,
+        "timestamp": "2026-01-28T20:01:13+08:00"
+      },
+      {
+        "index": 10,
+        "url": "https://github.com/Usagi-wusaqi/Usagi-wusaqi/commit/08ea62214839570c85bc67ee817ae55f99a86399",
+        "additions": 74,
+        "deletions": 15,
+        "images": 0,
+        "timestamp": "2026-01-28T20:01:34+08:00"
+      },
+      {
+        "index": 11,
+        "url": "https://github.com/Usagi-wusaqi/Usagi-wusaqi/commit/9bf46342cad2eb437bb3ee2ab9f020a320fd7499",
+        "additions": 32,
+        "deletions": 0,
+        "images": 0,
+        "timestamp": "2026-02-01T16:51:43+08:00"
+      },
+      {
+        "index": 12,
+        "url": "https://github.com/Usagi-wusaqi/Usagi-wusaqi/commit/03447c9fca0a32f077c3c30db2962afdd284b19b",
+        "additions": 720,
+        "deletions": 456,
+        "images": 0,
+        "timestamp": "2026-02-01T16:56:42+08:00"
+      },
+      {
+        "index": 13,
+        "url": "https://github.com/Usagi-wusaqi/Usagi-wusaqi/commit/32c6a9affe153086ac7a4c96932455508906f473",
+        "additions": 418,
+        "deletions": 970,
+        "images": 0,
+        "timestamp": "2026-02-01T19:04:14+08:00"
+      }
+    ]
+  }
+}
