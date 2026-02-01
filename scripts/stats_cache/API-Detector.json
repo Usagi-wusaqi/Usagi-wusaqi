@@ -1,0 +1,140 @@
+{
+  "_metadata": {
+    "total_commits": 16,
+    "total_additions": 1897,
+    "total_deletions": 30,
+    "total_images": 2
+  },
+  "data": {
+    "API-Detector": [
+      {
+        "index": 1,
+        "url": "https://github.com/Usagi-wusaqi/API-Detector/commit/097d46bd7dc593dbc3ee210eb23af22821a36366",
+        "additions": 116,
+        "deletions": 0,
+        "images": 0,
+        "timestamp": "2026-01-30T09:58:27+08:00"
+      },
+      {
+        "index": 2,
+        "url": "https://github.com/Usagi-wusaqi/API-Detector/commit/7e86dfbc563a1cef3ff38ee8cda0cc9aeb0085e4",
+        "additions": 80,
+        "deletions": 0,
+        "images": 0,
+        "timestamp": "2026-01-30T10:01:26+08:00"
+      },
+      {
+        "index": 3,
+        "url": "https://github.com/Usagi-wusaqi/API-Detector/commit/f2e70d53e01f31df387f2f33eea955715cd7b219",
+        "additions": 34,
+        "deletions": 0,
+        "images": 0,
+        "timestamp": "2026-01-30T10:01:33+08:00"
+      },
+      {
+        "index": 4,
+        "url": "https://github.com/Usagi-wusaqi/API-Detector/commit/1df537b953ff18f6d3744328f5879c16fa19ae70",
+        "additions": 88,
+        "deletions": 0,
+        "images": 0,
+        "timestamp": "2026-01-30T10:01:39+08:00"
+      },
+      {
+        "index": 5,
+        "url": "https://github.com/Usagi-wusaqi/API-Detector/commit/f17159385fc2e01ae24c299e9fb357b2d780f8da",
+        "additions": 208,
+        "deletions": 0,
+        "images": 0,
+        "timestamp": "2026-01-30T10:01:44+08:00"
+      },
+      {
+        "index": 6,
+        "url": "https://github.com/Usagi-wusaqi/API-Detector/commit/5c65ba4eaa6b30a64f4b80490e56384685804c3c",
+        "additions": 156,
+        "deletions": 0,
+        "images": 0,
+        "timestamp": "2026-01-30T10:01:49+08:00"
+      },
+      {
+        "index": 7,
+        "url": "https://github.com/Usagi-wusaqi/API-Detector/commit/2d2133f0f6963be86b8d88d05d9d8275d13d6b48",
+        "additions": 293,
+        "deletions": 0,
+        "images": 0,
+        "timestamp": "2026-01-30T10:01:54+08:00"
+      },
+      {
+        "index": 8,
+        "url": "https://github.com/Usagi-wusaqi/API-Detector/commit/38dbf8638df597052667e165395c6745fea0cbce",
+        "additions": 10,
+        "deletions": 0,
+        "images": 0,
+        "timestamp": "2026-01-30T10:02:00+08:00"
+      },
+      {
+        "index": 9,
+        "url": "https://github.com/Usagi-wusaqi/API-Detector/commit/0feba6fb9d89ec41b2671969c44f2db5ce07f3ea",
+        "additions": 52,
+        "deletions": 0,
+        "images": 0,
+        "timestamp": "2026-01-30T10:02:04+08:00"
+      },
+      {
+        "index": 10,
+        "url": "https://github.com/Usagi-wusaqi/API-Detector/commit/21c8646ba27cd0ee11836324f3ccb16a5f37d5d6",
+        "additions": 93,
+        "deletions": 0,
+        "images": 0,
+        "timestamp": "2026-01-30T10:02:09+08:00"
+      },
+      {
+        "index": 11,
+        "url": "https://github.com/Usagi-wusaqi/API-Detector/commit/2d166eae667eadf1d05fe68bc02088642aa5ae32",
+        "additions": 0,
+        "deletions": 0,
+        "images": 0,
+        "timestamp": "2026-01-30T10:02:14+08:00"
+      },
+      {
+        "index": 12,
+        "url": "https://github.com/Usagi-wusaqi/API-Detector/commit/7d3ad643891c35d5a45f3d48e93aa8d45163b666",
+        "additions": 35,
+        "deletions": 0,
+        "images": 0,
+        "timestamp": "2026-01-30T10:02:20+08:00"
+      },
+      {
+        "index": 13,
+        "url": "https://github.com/Usagi-wusaqi/API-Detector/commit/faefab375a4b4124ef8e22f7de5c8102a24bc5aa",
+        "additions": 7,
+        "deletions": 5,
+        "images": 0,
+        "timestamp": "2026-01-30T10:53:23+08:00"
+      },
+      {
+        "index": 14,
+        "url": "https://github.com/Usagi-wusaqi/API-Detector/commit/6a20f85dac84a82a2474508d40fb348d4af49259",
+        "additions": 72,
+        "deletions": 0,
+        "images": 2,
+        "timestamp": "2026-01-30T12:26:08+08:00"
+      },
+      {
+        "index": 15,
+        "url": "https://github.com/Usagi-wusaqi/API-Detector/commit/5c915781aff7f38924dbf0d72fe689af67c6f660",
+        "additions": 651,
+        "deletions": 23,
+        "images": 0,
+        "timestamp": "2026-01-30T12:49:23+08:00"
+      },
+      {
+        "index": 16,
+        "url": "https://github.com/Usagi-wusaqi/API-Detector/commit/41401bfc53cef555b8d06b708a84d27706c65aff",
+        "additions": 2,
+        "deletions": 2,
+        "images": 0,
+        "timestamp": "2026-01-30T12:56:21+08:00"
+      }
+    ]
+  }
+}

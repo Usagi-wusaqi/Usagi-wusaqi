@@ -1,0 +1,332 @@
+{
+  "_metadata": {
+    "total_commits": 40,
+    "total_additions": 4394,
+    "total_deletions": 1245,
+    "total_images": 100
+  },
+  "data": {
+    "ZenlessZoneZero-OneDragon": [
+      {
+        "index": 1,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/d0cdf46c5a05ed4e6077c10b7fefee4134ba0296",
+        "additions": 17,
+        "deletions": 6,
+        "images": 0,
+        "timestamp": "2025-09-20T19:19:15+08:00"
+      },
+      {
+        "index": 2,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/fee496038236300e598021ba477ff727eb0c52ca",
+        "additions": 164,
+        "deletions": 19,
+        "images": 0,
+        "timestamp": "2025-09-24T14:49:27+08:00"
+      },
+      {
+        "index": 3,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/971484fc108b3e2b52ca9e5e1f9683b8e6cf3375",
+        "additions": 2,
+        "deletions": 2,
+        "images": 0,
+        "timestamp": "2025-09-29T22:16:37+08:00"
+      },
+      {
+        "index": 4,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/ddaa5dd0ba8655be26e8bec236d13b80a09a147a",
+        "additions": 3,
+        "deletions": 1,
+        "images": 0,
+        "timestamp": "2025-10-01T16:55:52+08:00"
+      },
+      {
+        "index": 5,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/7feed9ff4b12d4a16d329d07ac2cb8076a43c11f",
+        "additions": 59,
+        "deletions": 32,
+        "images": 0,
+        "timestamp": "2025-10-01T23:24:32+08:00"
+      },
+      {
+        "index": 6,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/377fadae4d8fb79ab0580911f2a3b28106361d1d",
+        "additions": 70,
+        "deletions": 39,
+        "images": 0,
+        "timestamp": "2025-10-03T13:17:57+08:00"
+      },
+      {
+        "index": 7,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/0bd64a3b750d8ab8782c5236570de3ddcafad445",
+        "additions": 76,
+        "deletions": 18,
+        "images": 0,
+        "timestamp": "2025-10-04T17:57:02+08:00"
+      },
+      {
+        "index": 8,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/7ce9bc6df899f04d463eff782893d228a2ebc754",
+        "additions": 158,
+        "deletions": 129,
+        "images": 0,
+        "timestamp": "2025-10-05T11:11:16+08:00"
+      },
+      {
+        "index": 9,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/223a6dc2aa5432ef3fcdfa34ec9cbfa3fb2ea788",
+        "additions": 49,
+        "deletions": 21,
+        "images": 0,
+        "timestamp": "2025-10-07T16:01:34+08:00"
+      },
+      {
+        "index": 10,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/1b784b9210e57ebe250518697faad9dc052d3f12",
+        "additions": 4,
+        "deletions": 1,
+        "images": 0,
+        "timestamp": "2025-10-15T13:15:42+08:00"
+      },
+      {
+        "index": 11,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/3b9242ad2738f9a7a68d087672c3599ee152a292",
+        "additions": 45,
+        "deletions": 6,
+        "images": 0,
+        "timestamp": "2025-10-17T23:17:19+08:00"
+      },
+      {
+        "index": 12,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/a823204d1a3fcdd0795fbcf9d00cdf7c61bb61ee",
+        "additions": 8,
+        "deletions": 19,
+        "images": 12,
+        "timestamp": "2025-10-19T14:51:44+08:00"
+      },
+      {
+        "index": 13,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/c5bd0c4124771a49bae8384009e71c9c9a4c64e8",
+        "additions": 0,
+        "deletions": 0,
+        "images": 0,
+        "timestamp": "2025-10-19T20:21:03+08:00"
+      },
+      {
+        "index": 14,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/29dd7b42f63b5e7c989551032a8e68297a06d06e",
+        "additions": 49,
+        "deletions": 0,
+        "images": 6,
+        "timestamp": "2025-10-20T18:11:27+08:00"
+      },
+      {
+        "index": 15,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/6305a86b79d9bece754ecfa8aead4e1a34334b87",
+        "additions": 188,
+        "deletions": 61,
+        "images": 0,
+        "timestamp": "2025-10-21T23:39:43+08:00"
+      },
+      {
+        "index": 16,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/98558d799940c63f0046cb9c891726e75f89652a",
+        "additions": 27,
+        "deletions": 6,
+        "images": 0,
+        "timestamp": "2025-11-06T18:27:19+08:00"
+      },
+      {
+        "index": 17,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/183184a7205a9922037705b617f4ae3607938eab",
+        "additions": 320,
+        "deletions": 0,
+        "images": 10,
+        "timestamp": "2025-11-07T23:09:35+08:00"
+      },
+      {
+        "index": 18,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/ed84b4178f68d3e51ca004af8f16826d2848f1cd",
+        "additions": 1,
+        "deletions": 1,
+        "images": 12,
+        "timestamp": "2025-11-08T13:20:24+08:00"
+      },
+      {
+        "index": 19,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/0f542e19129f6a0c1d1a0f196cccb087cf130ab8",
+        "additions": 8,
+        "deletions": 8,
+        "images": 0,
+        "timestamp": "2025-11-10T02:34:16+08:00"
+      },
+      {
+        "index": 20,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/54a042191c716e776c81aa997c8e0cd2939b95fd",
+        "additions": 0,
+        "deletions": 0,
+        "images": 0,
+        "timestamp": "2025-11-10T14:32:40+08:00"
+      },
+      {
+        "index": 21,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/d914ea68f0dafc6e6db7f6442f8fe9028b75165e",
+        "additions": 114,
+        "deletions": 2,
+        "images": 6,
+        "timestamp": "2025-11-14T20:02:44+08:00"
+      },
+      {
+        "index": 22,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/97e26ebb30cda1655ef49448f6ae5aa53292f0aa",
+        "additions": 2,
+        "deletions": 2,
+        "images": 0,
+        "timestamp": "2025-11-14T23:46:21+08:00"
+      },
+      {
+        "index": 23,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/d15bf4106a5471a7a25c57f44f2daab3b6605d32",
+        "additions": 78,
+        "deletions": 124,
+        "images": 0,
+        "timestamp": "2025-11-28T23:22:04+08:00"
+      },
+      {
+        "index": 24,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/cc6dde7cfd46ee90b97475b5f747794eaa8bea32",
+        "additions": 422,
+        "deletions": 117,
+        "images": 0,
+        "timestamp": "2025-11-29T18:32:22+08:00"
+      },
+      {
+        "index": 25,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/4a6360c13604e55bb86a0c281d244006d9b71407",
+        "additions": 16,
+        "deletions": 9,
+        "images": 0,
+        "timestamp": "2025-11-29T19:19:39+08:00"
+      },
+      {
+        "index": 26,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/885016f112f6f8e176b99618a9272dbd45892fd2",
+        "additions": 13,
+        "deletions": 89,
+        "images": 0,
+        "timestamp": "2025-12-10T10:55:47+08:00"
+      },
+      {
+        "index": 27,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/e49ecf9272008f1dda6196b4ca8bd8f3c5f98785",
+        "additions": 29,
+        "deletions": 12,
+        "images": 0,
+        "timestamp": "2025-12-22T02:47:56+08:00"
+      },
+      {
+        "index": 28,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/f3cbcbb250035f92d1c7e336deabb83ac1de6c02",
+        "additions": 162,
+        "deletions": 107,
+        "images": 6,
+        "timestamp": "2025-12-29T20:37:09+08:00"
+      },
+      {
+        "index": 29,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/a5cb6fad14f8c4a6715f1b57069827adaee5add0",
+        "additions": 1128,
+        "deletions": 260,
+        "images": 4,
+        "timestamp": "2025-12-31T20:55:10+08:00"
+      },
+      {
+        "index": 30,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/a1f3d1ad13e2318979fc5d98803e5f970e6692ea",
+        "additions": 2,
+        "deletions": 2,
+        "images": 24,
+        "timestamp": "2026-01-01T23:07:02+08:00"
+      },
+      {
+        "index": 31,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/ca687eaa19ca0e5104b8da696c23854343b8e41f",
+        "additions": 0,
+        "deletions": 0,
+        "images": 0,
+        "timestamp": "2026-01-02T00:11:11+08:00"
+      },
+      {
+        "index": 32,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/549684f1f5145a73a1c1e24e63d1cd2ad9dc1ddd",
+        "additions": 0,
+        "deletions": 16,
+        "images": 0,
+        "timestamp": "2026-01-02T02:08:26+08:00"
+      },
+      {
+        "index": 33,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/9fee9e10d0e0e7263d68f255332e8a7d9bbba4b1",
+        "additions": 72,
+        "deletions": 74,
+        "images": 0,
+        "timestamp": "2026-01-02T21:21:27+08:00"
+      },
+      {
+        "index": 34,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/eebf614be8e7d558cd1f420508cd610c55722a22",
+        "additions": 879,
+        "deletions": 0,
+        "images": 20,
+        "timestamp": "2026-01-03T23:57:28+08:00"
+      },
+      {
+        "index": 35,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/67b7498facd63d186fd20ded6fe1430d808dd2aa",
+        "additions": 86,
+        "deletions": 19,
+        "images": 0,
+        "timestamp": "2026-01-08T18:02:58+08:00"
+      },
+      {
+        "index": 36,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/c81cc07b5471d74682881a0a8c38811d18f35522",
+        "additions": 9,
+        "deletions": 11,
+        "images": 0,
+        "timestamp": "2026-01-08T23:23:09+08:00"
+      },
+      {
+        "index": 37,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/2f664c88aed116b288eac0004133c1a408fd8f26",
+        "additions": 46,
+        "deletions": 5,
+        "images": 0,
+        "timestamp": "2026-01-30T00:35:03+08:00"
+      },
+      {
+        "index": 38,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/60e9e3d9834eede82752113e617b969a3cf1d4a7",
+        "additions": 3,
+        "deletions": 3,
+        "images": 0,
+        "timestamp": "2026-01-30T00:38:07+08:00"
+      },
+      {
+        "index": 39,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/8579930192dff2d8bd97639e908e25186fc909b3",
+        "additions": 64,
+        "deletions": 16,
+        "images": 0,
+        "timestamp": "2026-01-31T18:08:52+08:00"
+      },
+      {
+        "index": 40,
+        "url": "https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/commit/516bd201b93b959b8f6a36cf54537a41ad3035f6",
+        "additions": 21,
+        "deletions": 8,
+        "images": 0,
+        "timestamp": "2026-01-31T18:12:39+08:00"
+      }
+    ]
+  }
+}
