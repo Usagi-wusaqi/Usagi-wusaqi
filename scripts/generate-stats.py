@@ -4,12 +4,16 @@
 ## 核心功能
 - 统计所有仓库的贡献（additions/deletions、images数量）
 - 智能缓存系统，避免重复分析已处理的 commits
-- 支持 Fork 仓库（自动分析上游仓库）
+- 支持 Fork 仓库（直接克隆上游仓库获取完整历史）
 - 自动更新 README.md 统计数据和时间
 
 ## 数据源策略
 - Git log 优先：完整历史数据，准确可靠
 - API 仅兜底：仅在 git log 失败时使用（有分页限制，最多 1000 条）
+
+## Fork 仓库处理
+- 直接克隆上游仓库（不是 Fork 仓库本身）
+- 从 origin 获取 Git log，保证获取完整的 commit 历史
 
 ## 缓存清理策略
 - Git log 模式：对比所有 commits，删除消失的（被变基/压缩/重写）
@@ -27,12 +31,14 @@
 """
 
 import argparse
+import base64
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
@@ -49,6 +55,17 @@ CacheData = dict[str, list[CommitData]]
 RepoInfo = dict[str, str | bool | dict[str, str] | None]
 StatsData = dict[str, int]
 
+
+@dataclass
+class RepoContext:
+    """仓库上下文信息，用于减少函数参数数量"""
+
+    repo_path: str  # 本地仓库路径
+    owner: str  # 仓库所有者（Fork 仓库时为上游 owner）
+    repo_name: str  # 仓库名称（Fork 仓库时为上游名称）
+    username: str  # 要统计的用户名
+
+
 # ============================================================================
 # 常量定义
 # ============================================================================
@@ -61,6 +78,7 @@ PROGRESS_INTERVAL = 10
 IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp", ".ico"]
 README_FILE_PATH = Path(__file__).parent.parent / "README.md"
 CACHE_DIR = Path(__file__).parent / "stats_cache"
+AUTHOR_IDENTITIES_FILE = CACHE_DIR / "author_identities.json"
 
 # 时间和格式常量
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S UTC+8"
@@ -101,7 +119,7 @@ def get_default_from_readme(var_name: str) -> str | None:
         match = re.search(pattern, content)
         if match:
             return match.group(1).strip()
-    except Exception:
+    except (OSError, UnicodeDecodeError):
         pass
 
     return None
@@ -122,6 +140,130 @@ UPSTREAM_USERNAME = (
     or ""
 )
 TOKEN = os.environ.get("GH_TOKEN")
+
+
+# ============================================================================
+# 作者身份管理（自动学习）
+# ============================================================================
+
+# 运行时已知的作者身份（脚本启动时从文件加载）
+KNOWN_AUTHOR_IDENTITIES: set[str] = set()
+
+
+def load_author_identities() -> set[str]:
+    """加载已知的作者身份列表
+
+    存储格式: Base64 编码的 JSON
+    兼容旧格式: 纯 JSON（自动迁移到新格式）
+    """
+    if not AUTHOR_IDENTITIES_FILE.exists():
+        return set()
+
+    try:
+        with AUTHOR_IDENTITIES_FILE.open(encoding="utf-8") as f:
+            raw_data = f.read().strip()
+            if not raw_data:
+                return set()
+
+            # 尝试 Base64 解码（新格式）
+            try:
+                decoded_bytes = base64.b64decode(raw_data)
+                data = json.loads(decoded_bytes.decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                # 回退到纯 JSON 解码（旧格式兼容）
+                data = json.loads(raw_data)
+                # 触发迁移：下次保存时会自动转换为 Base64 格式
+
+            identities = set(data.get("identities", []))
+            if identities:
+                print_color(f"💾 已加载 {len(identities)} 个已知作者身份", Colors.GREEN)
+            return identities
+    except (OSError, json.JSONDecodeError) as e:
+        print_color(f"⚠️  加载作者身份失败: {e}", Colors.YELLOW)
+        return set()
+
+
+def save_author_identities(identities: set[str]) -> None:
+    """保存作者身份列表（Base64 编码，人类不可读）"""
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    try:
+        # 构建 JSON 数据
+        data = {"identities": sorted(identities)}
+        json_str = json.dumps(data, ensure_ascii=False)
+        # Base64 编码
+        encoded_data = base64.b64encode(json_str.encode("utf-8")).decode("ascii")
+
+        with AUTHOR_IDENTITIES_FILE.open("w", encoding="utf-8") as f:
+            f.write(encoded_data)
+        print_color(f"💾 已保存 {len(identities)} 个作者身份", Colors.GREEN)
+    except OSError as e:
+        print_color(f"⚠️  保存作者身份失败: {e}", Colors.YELLOW)
+
+
+def extract_author_from_commit(commit: CommitData) -> str | None:
+    """从 commit 对象提取 'Name <email>' 格式的作者身份"""
+    commit_dict = commit.get("commit", {})
+    if not isinstance(commit_dict, dict):
+        return None
+
+    author_dict = commit_dict.get("author", {})
+    if not isinstance(author_dict, dict):
+        return None
+
+    name = author_dict.get("name", "")
+    email = author_dict.get("email", "")
+    if name and email:
+        return f"{name} <{email}>"
+    return None
+
+
+def learn_author_identities_from_api(
+    owner: str,
+    repo_name: str,
+    username: str,
+) -> set[str]:
+    """从 GitHub API 学习用户的作者身份
+
+    通过 API 获取用户的 commits，提取所有不同的 author 身份
+    """
+    print_color("    🔍 从 API 学习作者身份...", Colors.YELLOW)
+
+    identities: set[str] = set()
+    page = 1
+
+    while page <= 3:  # 只查前 3 页，足够学习身份
+        api_url = (
+            f"{GITHUB_API}/repos/{owner}/{repo_name}/commits"
+            f"?author={username}&per_page={PER_PAGE}&page={page}"
+        )
+        output, returncode = github_api_request(api_url)
+
+        if returncode != 0:
+            break
+
+        try:
+            commits: list[CommitData] = json.loads(output)
+            if not commits:
+                break
+
+            for commit in commits:
+                if identity := extract_author_from_commit(commit):
+                    identities.add(identity)
+
+            if len(commits) < PER_PAGE:
+                break
+            page += 1
+
+        except json.JSONDecodeError:
+            break
+
+    if identities:
+        print_color(f"    ✅ 发现 {len(identities)} 个作者身份", Colors.GREEN)
+        for identity in sorted(identities):
+            print_color(f"       - {identity}", Colors.NC)
+
+    return identities
 
 
 # ============================================================================
@@ -196,9 +338,23 @@ def run_command(cmd: str, cwd: str | None = None) -> tuple[str, int]:
             check=False,
         )
         return result.stdout.strip(), result.returncode
-    except Exception as e:
+    except (OSError, subprocess.SubprocessError) as e:
         print_color(f"❌ 命令执行失败: {e}", Colors.RED)
         return "", 1
+
+
+def github_api_request(api_url: str) -> tuple[str, int]:
+    """执行 GitHub API 请求
+
+    统一封装 curl 命令，包含认证头和 Accept 头。
+
+    返回: (output, returncode)
+    """
+    curl_cmd = (
+        f'curl -s -H "Authorization: token {TOKEN}" '
+        f'-H "Accept: application/vnd.github.v3+json" "{api_url}"'
+    )
+    return run_command(curl_cmd)
 
 
 def replace_placeholders(content: str, replacements: dict[str, str]) -> str:
@@ -349,7 +505,7 @@ def save_cache(repo_name: str, cache_data: CacheData) -> bool:
         print_color(f"   additions: {total_additions}", Colors.NC)
         print_color(f"   deletions: {total_deletions}", Colors.NC)
         print_color(f"   images: {total_images}", Colors.NC)
-    except Exception as e:
+    except (OSError, TypeError, ValueError) as e:
         print_color(f"❌ 保存缓存失败: {e}", Colors.RED)
         return False
     else:
@@ -534,55 +690,93 @@ def clean_stale_cache(
 
 
 def get_repos() -> list[RepoInfo]:
-    """获取用户的所有仓库（包括公开和私有仓库）"""
+    """获取用户的所有仓库（包括公开和私有仓库，支持分页）"""
     print_color("📡 获取所有仓库列表...", Colors.YELLOW)
 
-    # 使用 curl 获取仓库列表
-    api_url = f"{GITHUB_API}/users/{ORIGIN_USERNAME}/repos?per_page={PER_PAGE}&type=all"
-    curl_cmd = (
-        f'curl -s -H "Authorization: token {TOKEN}" '
-        f'-H "Accept: application/vnd.github.v3+json" "{api_url}"'
-    )
-    output, returncode = run_command(curl_cmd)
+    repos: list[RepoInfo] = []
+    page = 1
+    max_pages = MAX_API_PAGES
 
-    if returncode != 0:
-        print_color("❌ 获取仓库列表失败", Colors.RED)
-        return []
-
-    # 解析 JSON
-    try:
-        parsed_data: list[dict[str, str | bool | dict[str, str] | None]] = json.loads(
-            output,
+    while page <= max_pages:
+        api_url = (
+            f"{GITHUB_API}/users/{ORIGIN_USERNAME}/repos"
+            f"?per_page={PER_PAGE}&type=all&page={page}"
         )
+        output, returncode = github_api_request(api_url)
 
-        repos: list[RepoInfo] = []
-        for repo in parsed_data:
-            repo_info: RepoInfo = repo
-            repos.append(repo_info)
+        if returncode != 0:
+            print_color("❌ 获取仓库列表失败", Colors.RED)
+            return repos if repos else []
 
-        print_color(f"✅ 获取到 {len(repos)} 个仓库", Colors.GREEN)
-        for repo in repos:
-            repo_name = repo.get("name", "Unknown")
-            is_fork = repo.get("fork", False)
-            print_color(
-                f"   - {repo_name} ({'Fork' if is_fork else '原创'})",
-                Colors.NC,
-            )
-    except json.JSONDecodeError as e:
-        print_color(f"❌ JSON 解析失败: {e}", Colors.RED)
-        print_color(f"数据内容: {output[:500]}", Colors.RED)
-        return []
-    else:
-        return repos
+        try:
+            parsed_data: list[RepoInfo] | dict[str, str] = json.loads(output)
+
+            # 检查 API 错误响应
+            if isinstance(parsed_data, dict):
+                error_msg = parsed_data.get("message", "")
+                if error_msg:
+                    print_color(f"❌ API 错误: {error_msg}", Colors.RED)
+                    return repos if repos else []
+                break  # dict 但无 message，异常情况
+
+            if not parsed_data:
+                break
+
+            for repo in parsed_data:
+                repo_info: RepoInfo = repo
+                repos.append(repo_info)
+
+            print_color(f"   第 {page} 页：获取到 {len(parsed_data)} 个仓库", Colors.NC)
+
+            if len(parsed_data) < PER_PAGE:
+                break
+
+            page += 1
+
+        except json.JSONDecodeError as e:
+            print_color(f"❌ JSON 解析失败: {e}", Colors.RED)
+            print_color(f"数据内容: {output[:500]}", Colors.RED)
+            return repos if repos else []
+
+    print_color(f"✅ 获取到 {len(repos)} 个仓库", Colors.GREEN)
+    for repo in repos:
+        repo_name = repo.get("name", "Unknown")
+        is_fork = repo.get("fork", False)
+        print_color(
+            f"   - {repo_name} ({'Fork' if is_fork else '原创'})",
+            Colors.NC,
+        )
+    return repos
 
 
 def get_upstream_repo(repo: RepoInfo) -> tuple[str | None, str | None]:
-    """获取 fork 仓库的上游仓库信息"""
+    """获取 fork 仓库的上游仓库信息
+
+    注意：/users/{username}/repos 列表 API 不返回 source/parent 字段，
+    需要额外调用 /repos/{owner}/{repo} 获取详情。
+    """
     is_fork = repo.get("fork")
     if not isinstance(is_fork, bool) or not is_fork:
         return None, None
 
+    # 列表 API 可能已包含 source/parent（某些情况下）
     upstream_info = repo.get("source") or repo.get("parent")
+
+    # 如果列表 API 未返回上游信息，额外调用详情 API
+    if not upstream_info:
+        repo_name = repo.get("name")
+        if not repo_name:
+            return None, None
+
+        api_url = f"{GITHUB_API}/repos/{ORIGIN_USERNAME}/{repo_name}"
+        output, returncode = github_api_request(api_url)
+        if returncode == 0:
+            try:
+                repo_detail = json.loads(output)
+                upstream_info = repo_detail.get("source") or repo_detail.get("parent")
+            except json.JSONDecodeError:
+                return None, None
+
     if isinstance(upstream_info, dict):
         upstream_dict: dict[str, str | dict[str, str]] = cast(
             "dict[str, str | dict[str, str]]",
@@ -608,28 +802,50 @@ def get_upstream_repo(repo: RepoInfo) -> tuple[str | None, str | None]:
 
 def get_commits_from_git_log(
     repo_path: str,
-    username: str,
     default_branch: str,
 ) -> list[CommitData] | None:
     """从本地 git log 获取用户的所有 commits（完整历史）
 
+    作者匹配：仅使用 API 学习到的完整身份 "Name <email>"
+    这确保只匹配属于用户的 commits，防止同名冒充
+
     返回包含 sha 和 commit.author.date 的完整结构，方便时间戳比较
     """
-    # 使用 --format 获取完整的 commit 信息，包括 ISO 格式的时间戳
-    git_cmd = (
-        f'git log origin/{default_branch} --author="{username}" --format="%H%n%aI"'
-    )
-    output, returncode = run_command(git_cmd, cwd=repo_path)
+    # 仅使用已知身份（从 API 自动学习的 "Name <email>" 格式）
+    # 不使用单独的用户名，防止同名冒充
+    if not KNOWN_AUTHOR_IDENTITIES:
+        print_color("    ⚠️  没有已知作者身份，需要先从 API 学习", Colors.YELLOW)
+        return None
 
-    if returncode == 0:
+    authors = KNOWN_AUTHOR_IDENTITIES
+    print_color(f"    ℹ️  使用 {len(authors)} 个作者身份匹配", Colors.NC)
+
+    # 使用集合去重（避免同一 commit 被多次匹配）
+    all_shas: set[str] = set()
+    all_commits: list[CommitData] = []
+
+    for author in authors:
+        git_cmd = (
+            f'git log origin/{default_branch} --author="{author}" --format="%H%n%aI"'
+        )
+        output, returncode = run_command(git_cmd, cwd=repo_path)
+
+        if returncode != 0:
+            continue
+
         lines = [line.strip() for line in output.split("\n") if line.strip()]
-        all_commits: list[CommitData] = []
 
         # 每两行为一对：SHA 和 ISO 时间戳
         for i in range(0, len(lines), 2):
             if i + 1 < len(lines):
                 sha = lines[i]
                 iso_date = lines[i + 1]
+
+                # 跳过已添加的 commit（去重）
+                if sha in all_shas:
+                    continue
+                all_shas.add(sha)
+
                 # 构建与 API 兼容的结构
                 commit_obj: CommitData = {
                     "sha": sha,
@@ -637,8 +853,12 @@ def get_commits_from_git_log(
                 }
                 all_commits.append(commit_obj)
 
-        print_color(f"    ℹ️  git log 获取 {len(all_commits)} 个commits", Colors.NC)
-        return all_commits if all_commits else None
+    if all_commits:
+        print_color(
+            f"    ℹ️  git log 获取 {len(all_commits)} 个commits",
+            Colors.NC,
+        )
+        return all_commits
     print_color("    ⚠️  git log 失败", Colors.YELLOW)
     return None
 
@@ -667,11 +887,7 @@ def get_commits_from_api(
         )
         print_color(f"    🔍 API 获取commits (第{page}页)...", Colors.NC)
 
-        curl_cmd = (
-            f'curl -s -H "Authorization: token {TOKEN}" '
-            f'-H "Accept: application/vnd.github.v3+json" "{api_url}"'
-        )
-        output, returncode = run_command(curl_cmd)
+        output, returncode = github_api_request(api_url)
 
         if returncode != 0:
             print_color("    ❌ API调用失败", Colors.RED)
@@ -715,45 +931,57 @@ def get_commits_from_api(
 
 
 def _fetch_commits_with_fallback(
-    repo_path: str,
-    owner: str,
-    repo_name: str,
-    username: str,
+    ctx: RepoContext,
     default_branch: str,
 ) -> tuple[list[CommitData], bool]:
     """获取 commits，Git log 优先，API 兜底
 
+    因为 Fork 仓库直接克隆的是上游仓库，所以统一从 origin 获取即可。
+
     返回: (commits, is_api_fallback)
     """
-    all_commits: list[CommitData] = []
-    is_api_fallback = False
-
-    # 1. 优先尝试从本地 git log 获取
-    if repo_path:
-        git_commits = get_commits_from_git_log(repo_path, username, default_branch)
-        if git_commits:
-            all_commits = git_commits
+    # 每次都从 API 增量学习身份（支持用户改名场景）
+    # API 只查前几页，性能影响很小
+    new_identities = learn_author_identities_from_api(
+        ctx.owner, ctx.repo_name, ctx.username
+    )
+    if new_identities:
+        old_count = len(KNOWN_AUTHOR_IDENTITIES)
+        KNOWN_AUTHOR_IDENTITIES.update(new_identities)
+        if len(KNOWN_AUTHOR_IDENTITIES) > old_count:
             print_color(
-                f"    ✅ 使用 Git log 数据（完整历史）: {len(all_commits)} 个commits",
+                f"    ✅ 发现新身份，共 {len(KNOWN_AUTHOR_IDENTITIES)} 个",
                 Colors.GREEN,
             )
-            return all_commits, is_api_fallback
+            save_author_identities(KNOWN_AUTHOR_IDENTITIES)
+
+    # 1. 优先尝试从本地 git log 获取（使用已学习的身份）
+    if ctx.repo_path:
+        commits = get_commits_from_git_log(ctx.repo_path, default_branch)
+        if commits:
+            print_color(
+                f"    ✅ 使用 Git log（完整历史）: {len(commits)} 个commits",
+                Colors.GREEN,
+            )
+            return commits, False
 
     # 2. Git log 失败时，使用 API 兜底
     print_color("    ⚠️  Git log 无数据，尝试 API 兜底...", Colors.YELLOW)
-    api_commits = get_commits_from_api(owner, repo_name, username, default_branch)
+
+    api_commits = get_commits_from_api(
+        ctx.owner, ctx.repo_name, ctx.username, default_branch
+    )
 
     if api_commits:
-        all_commits = api_commits
-        is_api_fallback = True
         print_color(
-            f"    ✅ 使用 API 兜底数据: {len(all_commits)} 个commits", Colors.GREEN
+            f"    ✅ 使用 API 兜底数据: {len(api_commits)} 个commits", Colors.GREEN
         )
         print_color(
             "    ⚠️  注意: API 有分页限制，超出范围的老数据将保留缓存", Colors.YELLOW
         )
+        return api_commits, True
 
-    return all_commits, is_api_fallback
+    return [], False
 
 
 def _find_cached_commit(
@@ -824,12 +1052,8 @@ def _get_commit_details_from_git(
 
 def _get_commit_details_from_api(owner: str, repo_name: str, sha: str) -> CommitData:
     """从 API 获取 commit 详情"""
-    commit_url = f"{GITHUB_API}/repos/{owner}/{repo_name}/commits/{sha}"
-    curl_cmd = (
-        f'curl -s -H "Authorization: token {TOKEN}" '
-        f'-H "Accept: application/vnd.github.v3+json" "{commit_url}"'
-    )
-    output, returncode = run_command(curl_cmd)
+    api_url = f"{GITHUB_API}/repos/{owner}/{repo_name}/commits/{sha}"
+    output, returncode = github_api_request(api_url)
     if returncode == 0:
         try:
             return json.loads(output)
@@ -882,17 +1106,15 @@ def _get_commit_timestamp(commit: CommitData) -> str:
 
 
 def analyze_commits(
-    repo_path: str,
-    owner: str,
-    repo_name: str,
-    username: str,
+    ctx: RepoContext,
     *,
     include_images: bool = True,
 ) -> tuple[int, int, int]:
     """同时分析代码行数和图片贡献
 
     数据获取策略：
-    - Git log 优先（完整历史）
+    - Fork 仓库：直接克隆上游仓库，从 origin 获取 Git log（完整历史）
+    - 非 Fork 仓库：克隆自己的仓库，从 origin 获取 Git log（完整历史）
     - API 仅在 git log 失败时兜底（有分页限制）
 
     返回: (additions, deletions, total_images)
@@ -900,24 +1122,18 @@ def analyze_commits(
     print_color("    📊 开始分析commits...", Colors.YELLOW)
 
     # 加载缓存
-    cache_data = load_cache(repo_name)
+    cache_data = load_cache(ctx.repo_name)
 
     # 获取默认分支
     default_branch = "main"
-    if repo_path:
+    if ctx.repo_path:
         git_cmd = 'git symbolic-ref refs/remotes/origin/HEAD | sed "s@^refs/remotes/origin/@@"'
-        output, returncode = run_command(git_cmd, cwd=repo_path)
+        output, returncode = run_command(git_cmd, cwd=ctx.repo_path)
         default_branch = output.strip() if returncode == 0 else "main"
         print_color(f"    ℹ️  默认分支: {default_branch}", Colors.NC)
 
     # 获取 commits（Git log 优先，API 兜底）
-    all_commits, is_api_fallback = _fetch_commits_with_fallback(
-        repo_path,
-        owner,
-        repo_name,
-        username,
-        default_branch,
-    )
+    all_commits, is_api_fallback = _fetch_commits_with_fallback(ctx, default_branch)
 
     if not all_commits:
         print_color("    ℹ️  未找到commits", Colors.NC)
@@ -930,7 +1146,7 @@ def analyze_commits(
     cache_data = clean_stale_cache(
         cache_data,
         all_commits,
-        repo_name,
+        ctx.repo_name,
         is_api_fallback=is_api_fallback,
     )
 
@@ -939,9 +1155,7 @@ def analyze_commits(
         _process_all_commits(
             all_commits=all_commits,
             cache_data=cache_data,
-            owner=owner,
-            repo_name=repo_name,
-            repo_path=repo_path,
+            ctx=ctx,
             include_images=include_images,
         )
     )
@@ -957,7 +1171,7 @@ def analyze_commits(
     )
 
     # 保存缓存
-    save_cache(repo_name, cache_data)
+    save_cache(ctx.repo_name, cache_data)
 
     return total_additions, total_deletions, total_images
 
@@ -966,9 +1180,7 @@ def _process_all_commits(
     *,
     all_commits: list[CommitData],
     cache_data: CacheData,
-    owner: str,
-    repo_name: str,
-    repo_path: str,
+    ctx: RepoContext,
     include_images: bool,
 ) -> tuple[int, int, int, int, int]:
     """处理所有 commits 并统计
@@ -985,7 +1197,7 @@ def _process_all_commits(
 
     for commit in all_commits:
         sha = commit.get("sha")
-        if not sha:
+        if not sha or not isinstance(sha, str):
             continue
 
         processed += 1
@@ -995,8 +1207,8 @@ def _process_all_commits(
                 f"    📊 处理中: {processed}/{total_commits} ({pct}%)", Colors.NC
             )
 
-        commit_url = f"https://github.com/{owner}/{repo_name}/commit/{sha}"
-        cached_data = _find_cached_commit(cache_data, repo_name, commit_url)
+        commit_url = f"https://github.com/{ctx.owner}/{ctx.repo_name}/commit/{sha}"
+        cached_data = _find_cached_commit(cache_data, ctx.repo_name, commit_url)
 
         if cached_data:
             # 使用缓存数据
@@ -1014,10 +1226,10 @@ def _process_all_commits(
 
         # 缓存未命中，获取详情
         cache_misses += 1
-        if repo_path:
-            commit_data = _get_commit_details_from_git(repo_path, sha)
+        if ctx.repo_path:
+            commit_data = _get_commit_details_from_git(ctx.repo_path, sha)
         else:
-            commit_data = _get_commit_details_from_api(owner, repo_name, sha)
+            commit_data = _get_commit_details_from_api(ctx.owner, ctx.repo_name, sha)
 
         # 计算统计
         additions, deletions, images = _calculate_commit_stats(
@@ -1028,9 +1240,9 @@ def _process_all_commits(
         total_images += images
 
         # 更新缓存
-        if repo_name not in cache_data:
-            cache_data[repo_name] = []
-        cache_data[repo_name].append(
+        if ctx.repo_name not in cache_data:
+            cache_data[ctx.repo_name] = []
+        cache_data[ctx.repo_name].append(
             {
                 "index": processed,
                 "url": commit_url,
@@ -1074,74 +1286,100 @@ def process_repos(repos: list[RepoInfo], *, include_images: bool = True) -> Stat
     temp_dir = Path.cwd() / "temp_repos"
     temp_dir.mkdir(parents=True, exist_ok=True)
 
-    for repo in repos:
-        repo_name = repo.get("name")
-        repo_url = repo.get("html_url")
-        is_fork = repo.get("fork", False)
+    try:
+        for repo in repos:
+            repo_name = repo.get("name")
+            repo_url = repo.get("html_url")
+            is_fork = repo.get("fork", False)
 
-        if not repo_name or not repo_url:
-            continue
+            if not repo_name or not repo_url:
+                continue
 
-        print_separator(f"📦 仓库: {repo_name}", Colors.YELLOW)
-        print_color("  URL: " + str(repo_url), Colors.NC)
-        print_color("  类型: " + ("Fork 仓库" if is_fork else "原创仓库"), Colors.NC)
-
-        # 克隆仓库到临时目录
-        repo_path = temp_dir / str(repo_name)
-        if repo_path.exists():
-            print_color("  🔄 更新本地仓库...", Colors.YELLOW)
-            # 更新默认分支
-            run_command("git fetch origin", cwd=str(repo_path))
-        else:
-            print_color("  📥 克隆仓库...", Colors.YELLOW)
-            clone_url = str(repo_url).replace(
-                "https://github.com/",
-                f"https://{TOKEN}@github.com/",
-            )
-            # 克隆仓库
-            run_command(f"git clone {clone_url}", cwd=str(temp_dir))
-
-        # 确定要分析的仓库（fork 仓库用上游仓库）
-        owner = ORIGIN_USERNAME
-        target_repo_name = str(repo_name)
-
-        upstream_owner, upstream_name = get_upstream_repo(repo)
-        if upstream_owner and upstream_name:
-            owner = upstream_owner
-            target_repo_name = str(upstream_name)
-
-        # 同时分析代码行数和图片贡献
-        # 注意：repo_path 用于获取 git log，owner/repo_name 用于 API
-        repo_additions, repo_deletions, repo_images = analyze_commits(
-            str(repo_path),
-            owner or ORIGIN_USERNAME,
-            target_repo_name,
-            ORIGIN_USERNAME,
-            include_images=include_images,
-        )
-
-        total_images += repo_images
-
-        # 显示结果
-        if repo_additions == 0 and repo_deletions == 0 and repo_images == 0:
-            print_color("  ⚠️  用户没有代码或图片贡献", Colors.YELLOW)
-        else:
-            print_stats_summary(
-                repo_additions,
-                repo_deletions,
-                repo_images,
-                include_images=include_images,
-                prefix="  ",
+            print_separator(f"📦 仓库: {repo_name}", Colors.YELLOW)
+            print_color("  URL: " + str(repo_url), Colors.NC)
+            print_color(
+                "  类型: " + ("Fork 仓库" if is_fork else "原创仓库"), Colors.NC
             )
 
-            # 累加到总计
-            total_additions += repo_additions
-            total_deletions += repo_deletions
+            # 确定要克隆的仓库（Fork 仓库直接克隆上游）
+            upstream_owner, upstream_name = get_upstream_repo(repo)
+            if upstream_owner and upstream_name:
+                # Fork 仓库：直接克隆上游仓库
+                clone_owner = upstream_owner
+                clone_repo_name = upstream_name
+                target_repo_name = upstream_name
+                clone_url = (
+                    f"https://{TOKEN}@github.com/{upstream_owner}/{upstream_name}.git"
+                )
+                print_color(
+                    f"  📡 直接克隆上游仓库: {upstream_owner}/{upstream_name}",
+                    Colors.NC,
+                )
+            else:
+                # 非 Fork 仓库：克隆自己的仓库
+                clone_owner = ORIGIN_USERNAME
+                clone_repo_name = str(repo_name)
+                target_repo_name = str(repo_name)
+                clone_url = str(repo_url).replace(
+                    "https://github.com/",
+                    f"https://{TOKEN}@github.com/",
+                )
 
-    # 清理临时目录
-    print_color("\n  🧹 清理临时文件...", Colors.YELLOW)
-    if temp_dir.exists():
-        shutil.rmtree(temp_dir)
+            # 克隆仓库到临时目录（使用上游仓库名作为目录名）
+            repo_path = temp_dir / clone_repo_name
+            if repo_path.exists():
+                print_color("  🔄 更新本地仓库...", Colors.YELLOW)
+                # 先尝试 unshallow（如果之前是浅克隆），然后 fetch
+                run_command(
+                    "git fetch --unshallow origin 2>/dev/null || git fetch origin",
+                    cwd=str(repo_path),
+                )
+            else:
+                print_color("  📥 克隆仓库...", Colors.YELLOW)
+                # 使用 --no-single-branch 确保获取所有分支引用
+                _, returncode = run_command(
+                    f"git clone --no-single-branch {clone_url}",
+                    cwd=str(temp_dir),
+                )
+                if returncode != 0 or not repo_path.exists():
+                    print_color("  ⚠️  克隆仓库失败，跳过", Colors.YELLOW)
+                    continue
+
+            # 构建仓库上下文（简化：不再需要 upstream 信息，因为直接克隆的就是主仓库）
+            ctx = RepoContext(
+                repo_path=str(repo_path),
+                owner=clone_owner,
+                repo_name=target_repo_name,
+                username=ORIGIN_USERNAME,
+            )
+
+            # 同时分析代码行数和图片贡献
+            repo_additions, repo_deletions, repo_images = analyze_commits(
+                ctx, include_images=include_images
+            )
+
+            total_images += repo_images
+
+            # 显示结果
+            if repo_additions == 0 and repo_deletions == 0 and repo_images == 0:
+                print_color("  ⚠️  用户没有代码或图片贡献", Colors.YELLOW)
+            else:
+                print_stats_summary(
+                    repo_additions,
+                    repo_deletions,
+                    repo_images,
+                    include_images=include_images,
+                    prefix="  ",
+                )
+
+                # 累加到总计
+                total_additions += repo_additions
+                total_deletions += repo_deletions
+    finally:
+        # 清理临时目录（确保异常时也能清理）
+        print_color("\n  🧹 清理临时文件...", Colors.YELLOW)
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir)
 
     print_separator("📈 汇总统计")
     print_color(f"  ➕ 总 additions: {total_additions}", Colors.GREEN)
@@ -1315,7 +1553,9 @@ def update_readme(stats: StatsData) -> bool:
         if not has_contribution:
             print_color("ℹ️  没有检测到新的代码或图片贡献，不更新时间戳", Colors.YELLOW)
 
-        content = update_existing_readme(existing_content, stats, skip_time_update)
+        content = update_existing_readme(
+            existing_content, stats, skip_time_update=skip_time_update
+        )
 
     # 保存 README.md
     if not save_readme_content(content):
@@ -1359,6 +1599,10 @@ def main() -> int:
     if not TOKEN:
         print_color("❌ 错误: GH_TOKEN 环境变量未设置", Colors.RED)
         return 1
+
+    # 加载已知作者身份（后续处理仓库时会增量学习新身份）
+    KNOWN_AUTHOR_IDENTITIES.clear()
+    KNOWN_AUTHOR_IDENTITIES.update(load_author_identities())
 
     # 获取仓库列表
     repos = get_repos()
