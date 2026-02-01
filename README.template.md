@@ -3,9 +3,9 @@ ORIGIN_USERNAME = {{ORIGIN_USERNAME}}
 UPSTREAM_USERNAME = {{UPSTREAM_USERNAME}}
 
 模板说明：
-- README.template.md 模板文件，包含占位符
-- 脚本会从这个模板生成最终的 README.md
-- 这样确保每次运行都能正确替换占位符
+- README.template.md 是模板文件，脚本会从中生成 README.md
+- 用户名占位符 {{ORIGIN_USERNAME}} / {{UPSTREAM_USERNAME}} 由脚本自动替换
+- 作者身份由脚本自动从 API 学习，无需手动配置
 -->
 
 <div align="center">
