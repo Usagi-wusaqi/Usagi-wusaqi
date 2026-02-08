@@ -84,6 +84,7 @@ AUTHOR_IDENTITIES_FILE = CACHE_DIR / "author_identities.json"
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S UTC+8"
 TIME_PATTERN = r"(Last updated: )\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}( UTC\+8)?"
 STATS_PATTERN = r"(➕additions: )\d+( ➖deletions: )\d+( 🖼️images: )\d+"
+STATS_EXTRACT_PATTERN = r"➕additions: (\d+) ➖deletions: (\d+) 🖼️images: (\d+)"
 
 # Git 解析常量
 MIN_STATUS_PARTS = 2  # git show --name-status 输出至少需要的字段数
@@ -690,7 +691,7 @@ def clean_stale_cache(
 
 
 def get_repos() -> list[RepoInfo]:
-    """获取用户的所有仓库（包括公开和私有仓库，支持分页）"""
+    """获取用户的所有仓库（支持分页，私有仓库需要 PAT 权限）"""
     print_color("📡 获取所有仓库列表...", Colors.YELLOW)
 
     repos: list[RepoInfo] = []
@@ -1462,14 +1463,8 @@ def generate_readme_from_template(template_path: Path, stats: StatsData) -> str:
 def update_existing_readme(
     content: str,
     stats: StatsData,
-    *,
-    skip_time_update: bool = False,
 ) -> str:
-    """更新现有 README 内容
-
-    参数：
-    - skip_time_update: 如果为 True，则不更新时间戳（当没有新贡献时）
-    """
+    """更新现有 README 内容"""
     # 替换统计数字
     add = stats.get("total_additions", 0)
     dele = stats.get("total_deletions", 0)
@@ -1477,11 +1472,10 @@ def update_existing_readme(
     replacement = f"\\g<1>{add}\\g<2>{dele}\\g<3>{img}"
     content = re.sub(STATS_PATTERN, replacement, content)
 
-    # 只在有贡献时才更新时间戳
-    if not skip_time_update:
-        current_time = get_current_time()
-        time_replacement = f"\\g<1>{current_time}"
-        content = re.sub(TIME_PATTERN, time_replacement, content)
+    # 更新时间戳
+    current_time = get_current_time()
+    time_replacement = f"\\g<1>{current_time}"
+    content = re.sub(TIME_PATTERN, time_replacement, content)
 
     # 更新用户名
     return update_usernames_in_readme(content)
@@ -1507,8 +1501,32 @@ def print_update_summary(stats: StatsData) -> None:
     print_color(f"   ➖ 删除行数: {stats.get('total_deletions', 0)}", Colors.NC)
     print_color(f"   🖼️ 图片数量: {stats.get('total_images', 0)}", Colors.NC)
     print_color(f"   🕒 更新时间: {current_time}", Colors.NC)
-    print_color(f"   👤 当前用户名: {ORIGIN_USERNAME}", Colors.NC)
+    print_color(f"   👤 远端用户名: {ORIGIN_USERNAME}", Colors.NC)
     print_color(f"   👑 上游用户名: {UPSTREAM_USERNAME}", Colors.NC)
+
+
+def _read_current_stats_from_readme() -> StatsData | None:
+    """从现有 README.md 中读取当前的统计数字
+
+    返回: 包含 total_additions, total_deletions, total_images 的字典，或 None
+    """
+    if not README_FILE_PATH.exists():
+        return None
+
+    try:
+        with README_FILE_PATH.open(encoding="utf-8") as f:
+            content = f.read()
+        match = re.search(STATS_EXTRACT_PATTERN, content)
+        if match:
+            return {
+                "total_additions": int(match.group(1)),
+                "total_deletions": int(match.group(2)),
+                "total_images": int(match.group(3)),
+            }
+    except (OSError, UnicodeDecodeError, ValueError):
+        pass
+
+    return None
 
 
 def update_readme(stats: StatsData) -> bool:
@@ -1517,12 +1535,24 @@ def update_readme(stats: StatsData) -> bool:
     功能：
     - 如果存在 README.template.md，从模板生成完整的 README
     - 如果不存在模板，使用正则表达式更新现有 README
+    - 如果统计数据未变化，跳过更新避免无意义的提交
     - 支持可重复运行，完美解决占位符替换问题
 
     参数：
     - stats: 统计数据字典，包含 total_additions, total_deletions, total_images
     """
     print_color("📝 更新 README.md...", Colors.YELLOW)
+
+    # 先检查统计数据是否有变化
+    old_stats = _read_current_stats_from_readme()
+    if (
+        old_stats is not None
+        and old_stats.get("total_additions") == stats.get("total_additions", 0)
+        and old_stats.get("total_deletions") == stats.get("total_deletions", 0)
+        and old_stats.get("total_images") == stats.get("total_images", 0)
+    ):
+        print_color("ℹ️  统计数据未变化，跳过 README 更新", Colors.YELLOW)
+        return True
 
     template_path = Path(__file__).parent.parent / "README.template.md"
 
@@ -1542,20 +1572,7 @@ def update_readme(stats: StatsData) -> bool:
         with README_FILE_PATH.open(encoding="utf-8") as f:
             existing_content = f.read()
 
-        # 检查是否有任何贡献，如果没有则跳过时间戳更新
-        has_contribution = (
-            stats.get("total_additions", 0)
-            or stats.get("total_deletions", 0)
-            or stats.get("total_images", 0)
-        )
-        skip_time_update = not has_contribution
-
-        if not has_contribution:
-            print_color("ℹ️  没有检测到新的代码或图片贡献，不更新时间戳", Colors.YELLOW)
-
-        content = update_existing_readme(
-            existing_content, stats, skip_time_update=skip_time_update
-        )
+        content = update_existing_readme(existing_content, stats)
 
     # 保存 README.md
     if not save_readme_content(content):

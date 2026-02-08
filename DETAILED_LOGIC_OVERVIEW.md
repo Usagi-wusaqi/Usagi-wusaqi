@@ -15,13 +15,9 @@
 ### Fork 用户（推荐）
 
 1. **Fork 仓库** - 点击右上角 "Fork" 按钮
-2. **设置 GitHub Token**
-   - 访问 [GitHub Settings > Personal access tokens](https://github.com/settings/tokens)
-   - 生成新 token，选择 `repo` + `read:user` 权限
-3. **配置 Secret**
-   - 仓库 `Settings > Secrets and variables > Actions`
-   - 添加 `GH_TOKEN`，值为你的 token
-4. **触发更新**
+2. **触发更新**（工作流默认使用 GitHub 内置的 `GITHUB_TOKEN`，无需额外配置）
+
+   > **可选：** 如需统计私有仓库，可在 `Settings > Secrets and variables > Actions` 中创建 PAT（需要 `repo` 权限），用它覆盖 `GITHUB_TOKEN`
 
    **方式一：推送代码自动触发**
    ```bash
@@ -45,7 +41,7 @@
    ```yaml
    on:
      push:
-       branches: [ main ]
+       branches: [ main, master ]
      workflow_dispatch:
      schedule:
        - cron: '0 0 * * 0'  # 默认每周日零点整触发 (UTC时间)
@@ -59,7 +55,7 @@ python scripts/generate-stats.py
 
 # 可选参数
 python scripts/generate-stats.py --no-images    # 不统计图片
-python scripts/generate-stats.py --clear-cache  # 清除缓存
+python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（不会重新生成统计）
 ```
 
 ---
@@ -90,7 +86,7 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存
 
 | 占位符 | 说明 | 示例 |
 | ------ | ---- | ---- |
-| `{{ORIGIN_USERNAME}}` | 当前用户名 | `your-username` |
+| `{{ORIGIN_USERNAME}}` | 远端用户名 | `your-username` |
 | `{{UPSTREAM_USERNAME}}` | 上游用户名 | `upstream-username` |
 | `{{TOTAL_ADDITIONS}}` | 总增加行数 | `15316` |
 | `{{TOTAL_DELETIONS}}` | 总删除行数 | `4231` |
@@ -130,11 +126,12 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存
 - **智能缓存系统** - 95%+ 缓存命中率，显著提升运行速度
 - **增量更新** - 只处理新增的 commits，避免重复分析
 - **智能清理** - 检测变基操作，只删除消失的 commits
+- **智能跳过** - 统计数据未变化时不更新 README，避免无意义的提交
 
 ### 📊 全面的数据统计
 - **代码贡献** - 统计所有仓库的代码增删行数
-- **图片资源** - 统计图片文件（.png, .jpg, .gif, .svg, .webp, .ico, .bmp）
-- **双数据源** - 结合本地 git log 和 GitHub API，确保数据完整性
+- **图片资源** - 统计图片文件（.png, .jpg, .jpeg, .gif, .svg, .webp, .ico, .bmp）
+- **Git log 优先** - 优先使用本地 git log（完整历史），API 仅在失败时兜底
 - **实时更新** - 自动更新 README 中的统计数字和时间戳
 
 ### 🍴 Fork 友好设计
@@ -145,7 +142,7 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存
 
 ### 🔧 技术优势
 - **零依赖** - 只使用 Python 标准库，无需额外安装
-- **容错性强** - API 失败时自动降级使用 git log
+- **容错性强** - git log 失败时自动降级使用 API 兜底
 - **格式保持** - 精确替换统计数字，完全保持 README 原有格式
 - **向后兼容** - 支持新旧缓存格式自动转换
 
@@ -157,17 +154,19 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存
 
 | 变量名 | 必需 | 默认值 | 说明 |
 | ------ | ---- | ------ | ---- |
-| `GH_TOKEN` | ✅ | 无 | GitHub Personal Access Token |
-| `ORIGIN_USERNAME` | ❌ | 自动检测 | 远端用户名或当前用户名 |
+| `GH_TOKEN` | ✅ | 内置 `GITHUB_TOKEN` | GitHub Token（默认使用内置 token，如需统计私有仓库可配置 PAT） |
+| `ORIGIN_USERNAME` | ❌ | 自动检测 | 远端用户名 |
 | `UPSTREAM_USERNAME` | ❌ | 自动检测 | 上游用户名 |
 
 ### GitHub Actions 自动设置
 
-在 GitHub Actions 环境中，变量会自动设置：
+在 GitHub Actions 环境中，工作流会通过 GitHub API 自动检测仓库类型并设置变量：
 
 ```yaml
-ORIGIN_USERNAME: ${{ 远端用户名或当前用户名 }}    # 远端用户名
-UPSTREAM_USERNAME: ${{ 上游用户名 }}                  # 上游用户名
+env:
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  ORIGIN_USERNAME: ${{ steps.determine-users.outputs.ORIGIN_USERNAME }}
+  UPSTREAM_USERNAME: ${{ steps.determine-users.outputs.UPSTREAM_USERNAME }}
 ```
 
 ### 变量用途说明
@@ -181,7 +180,7 @@ UPSTREAM_USERNAME: ${{ 上游用户名 }}                  # 上游用户名
 **UPSTREAM_USERNAME（上游用户名）：**
 - 始终是上游用户名
 - Fork 仓库时：指向上游用户名
-- 非 Fork 仓库时：指向当前用户名
+- 非 Fork 仓库时：指向远端用户名
 - 用于"Made with ❤️ by"部分的作者链接
 
 **变量关系总结：**
@@ -189,7 +188,7 @@ UPSTREAM_USERNAME: ${{ 上游用户名 }}                  # 上游用户名
 | 仓库类型 | ORIGIN_USERNAME | UPSTREAM_USERNAME |
 |---------|---------------|------------------|
 | Fork 仓库 | 远端用户名（当前 Fork 的所有者） | 上游用户名 |
-| 非 Fork 仓库 | 当前用户名 | 当前用户名 |
+| 非 Fork 仓库 | 远端用户名 | 远端用户名 |
 
 脚本会按以下优先级初始化变量：
 
@@ -215,13 +214,6 @@ UPSTREAM_USERNAME: ${{ 上游用户名 }}                  # 上游用户名
 - ✅ **独立缓存文件** - 每个用户有自己的缓存，互不干扰
 - ✅ **可重复运行** - 不会出现占位符消失问题
 
-**变量关系总结：**
-
-| 仓库类型 | ORIGIN_USERNAME | UPSTREAM_USERNAME |
-|---------|---------------|------------------|
-| Fork 仓库 | 远端用户名（当前 Fork 的所有者） | 上游用户名 |
-| 非 Fork 仓库 | 当前用户名 | 当前用户名 |
-
 ### 模板系统工作流程
 
 1. **检测模板** - 脚本首先检查是否存在 `README.template.md`
@@ -236,7 +228,7 @@ UPSTREAM_USERNAME: ${{ 上游用户名 }}                  # 上游用户名
 | 首次运行 | 2-10 分钟 | 取决于仓库数量和 commit 历史 |
 | 日常更新 | 30-60 秒 | 95%+ 缓存命中率 |
 | 清除缓存后 | 2-10 分钟 | 需要重新分析所有数据 |
-| API 限流时 | 1-3 分钟 | 降级使用 git log |
+| API 限流时 | 无明显影响 | 主要使用 git log，API 仅兜底 |
 
 ---
 
@@ -245,16 +237,22 @@ UPSTREAM_USERNAME: ${{ 上游用户名 }}                  # 上游用户名
 ### 工作流程
 
 ```text
-1. 初始化 → 2. 获取仓库列表 → 3. 处理每个仓库 → 4. 更新 README → 5. 清理
-   ↓              ↓                ↓               ↓            ↓
-环境变量配置    GitHub API      智能缓存+分析    正则替换     临时文件清理
+1. 初始化 → 2. 获取仓库列表 → 3. 处理每个仓库 → 4. 变化检测 → 5. 更新 README → 6. 清理
+   ↓              ↓                ↓               ↓              ↓            ↓
+环境变量配置    GitHub API      智能缓存+分析    比较新旧数据    正则替换     临时文件清理
 ```
+
+### 智能跳过
+
+- 更新 README 前会先从现有 README 提取当前统计数字
+- 如果 additions、deletions、images 三个数字都未变化，跳过 README 更新
+- 避免仅因时间戳变化而产生无意义的提交
 
 ### 数据源策略
 
-- **本地 git log** - 完整历史数据（可能不是最新）
-- **GitHub API** - 远程最新数据（最多 1000 个 commits）
-- **智能合并** - 比较时间戳，选择最新数据；API 失败时降级使用 git log
+- **本地 git log（优先）** - 完整历史数据，准确可靠
+- **GitHub API（兜底）** - 仅在 git log 失败时使用（有分页限制，最多 1000 条）
+- **无合并逻辑** - 两个数据源只取其一，git log 优先，API 仅作回退方案
 
 ### 缓存机制
 
@@ -262,6 +260,14 @@ UPSTREAM_USERNAME: ${{ 上游用户名 }}                  # 上游用户名
 - **智能清理** - 检测变基操作，只删除消失的 commits
 - **永久保存** - 保留比当前最老 commit 更久远的历史数据
 - **格式兼容** - 自动处理新旧缓存格式转换
+
+### 作者身份管理
+
+- **自动学习** - 从 GitHub API 自动学习用户的所有提交身份（Name + Email）
+- **防冒充** - git log 匹配时使用完整的 `Name <email>` 格式，防止同名冒充
+- **持久化存储** - 以 Base64 编码保存到 `stats_cache/author_identities.json`
+- **增量更新** - 每次处理仓库时增量学习新身份，支持用户改名场景
+- **旧格式兼容** - 自动从纯 JSON 格式迁移到 Base64 格式
 
 ### Fork 处理逻辑
 
@@ -276,15 +282,7 @@ UPSTREAM_USERNAME: ${{ 上游用户名 }}                  # 上游用户名
 
 1. **定时任务** - 只有 GitHub Actions 作为作者
 2. **手动触发** - GitHub Actions + 触发者（使用隐私邮箱）
-3. **Push 事件** - GitHub Actions + 提交者（使用隐私邮箱）
-
-### 隐私邮箱格式
-
-GitHub 隐私邮箱的标准格式：`{id}+{username}@users.noreply.github.com`
-
-- **优先使用**：带 ID 的格式（更准确，避免改名后的问题）
-- **回退方案**：如果获取 ID 失败，使用 `{username}@users.noreply.github.com`
-- **自动获取**：通过 GitHub API 获取用户 ID，无需手动配置
+3. **Push 事件** - 只有 GitHub Actions 作为作者
 
 ---
 
@@ -303,7 +301,7 @@ GitHub 隐私邮箱的标准格式：`{id}+{username}@users.noreply.github.com`
 - 可以手动触发工作流重新统计
 
 **Q: 脚本运行失败？**
-- 检查 token 权限是否足够（需要 `repo` + `read:user`）
+- 检查 token 权限是否足够（如使用 PAT，需要 `repo` 权限）
 - 确认网络连接正常
 - 查看详细错误日志
 
@@ -342,16 +340,16 @@ curl -H "Authorization: token $GH_TOKEN" https://api.github.com/user
 # 检查 API 限流状态
 curl -H "Authorization: token $GH_TOKEN" https://api.github.com/rate_limit
 
-# 脚本会自动降级使用 git log，无需担心
+# 脚本主要使用 git log，API 仅为兜底，影响有限
 ```
 
 #### Fork 后如何使用
 
 **使用步骤：**
 1. **Fork 仓库**到你的账户
-2. **设置 GitHub Token**：在仓库设置中添加 `GH_TOKEN` secret
-3. **触发工作流**：推送代码或手动触发 GitHub Actions
-4. **自动更新**：脚本会自动更新为你的统计数据
+2. **触发工作流**：推送代码或手动触发 GitHub Actions（默认使用内置 `GITHUB_TOKEN`）
+3. **自动更新**：脚本会自动更新为你的统计数据
+4. **可选**：如需统计私有仓库，在仓库 `Settings > Secrets` 中配置 PAT 覆盖 `GITHUB_TOKEN`
 
 **预期行为：**
 - ✅ 模板系统：从 `README.template.md` 生成完整的 README
@@ -366,8 +364,11 @@ curl -H "Authorization: token $GH_TOKEN" https://api.github.com/rate_limit
 # 查看详细输出
 python scripts/generate-stats.py
 
-# 清除缓存重新运行
+# 清除缓存（仅清除，不会重新运行统计）
 python scripts/generate-stats.py --clear-cache
+
+# 清除缓存后重新运行（需要两条命令）
+python scripts/generate-stats.py --clear-cache && python scripts/generate-stats.py
 
 # 只统计代码，不统计图片
 python scripts/generate-stats.py --no-images

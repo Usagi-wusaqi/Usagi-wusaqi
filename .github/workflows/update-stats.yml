@@ -79,37 +79,27 @@ jobs:
           echo "✅ 用户已确定"
 
           # 根据触发类型确定提交作者
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            # 定时任务，只有 GitHub Actions
-            echo "⏰ 检测到定时任务"
-            echo "co_authors=" >> $GITHUB_OUTPUT
-            echo "🤖 作者: GitHub Actions"
-          else
-            # 手动触发或 Push 触发，获取触发用户
-            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-              echo "👆 检测到手动触发"
-              TRIGGER_USER="${{ github.triggering_actor }}"
-            else
-              echo "📝 检测到 Push 事件"
-              TRIGGER_USER="${{ github.actor }}"
-            fi
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # 手动触发，带上触发者
+            echo "👆 检测到手动触发"
+            TRIGGER_USER="${{ github.triggering_actor }}"
 
-            # 获取用户 ID 以生成正确的隐私邮箱
             USER_INFO=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
               "https://api.github.com/users/$TRIGGER_USER")
-
             USER_ID=$(echo "$USER_INFO" | jq -r '.id // null')
 
             if [ -n "$USER_ID" ] && [ "$USER_ID" != "null" ]; then
               PRIVACY_EMAIL="$USER_ID+$TRIGGER_USER@users.noreply.github.com"
-              echo "📧 使用带 ID 的隐私邮箱: $PRIVACY_EMAIL"
             else
               PRIVACY_EMAIL="$TRIGGER_USER@users.noreply.github.com"
-              echo "📧 使用无 ID 的隐私邮箱: $PRIVACY_EMAIL"
             fi
 
             echo "co_authors=Co-authored-by: $TRIGGER_USER <$PRIVACY_EMAIL>" >> $GITHUB_OUTPUT
             echo "👤 作者: GitHub Actions + $TRIGGER_USER"
+          else
+            # 定时任务或 Push，只有 GitHub Actions
+            echo "co_authors=" >> $GITHUB_OUTPUT
+            echo "🤖 作者: GitHub Actions"
           fi
 
           echo "trigger_type=${{ github.event_name }}" >> $GITHUB_OUTPUT
@@ -175,7 +165,7 @@ jobs:
           # 添加更改
           git add README.md scripts/stats_cache/
 
-          # 创建提交，带合作作者（如适用）
+          # 创建提交
           if [ -n "${{ steps.determine-users.outputs.co_authors }}" ]; then
             git commit \
               -m "📊 更新统计（自动）" \
