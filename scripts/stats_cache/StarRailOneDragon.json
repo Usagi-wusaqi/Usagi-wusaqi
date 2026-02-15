@@ -1,9 +1,9 @@
 {
   "_metadata": {
-    "total_commits": 1,
-    "total_additions": 44,
-    "total_deletions": 4,
-    "total_images": 0
+    "total_commits": 3,
+    "total_additions": 803,
+    "total_deletions": 158,
+    "total_images": 6
   },
   "data": {
     "StarRailOneDragon": [
@@ -14,6 +14,22 @@
         "deletions": 4,
         "images": 0,
         "timestamp": "2026-01-19T21:20:37+08:00"
+      },
+      {
+        "index": 2,
+        "url": "https://github.com/OneDragon-Anything/StarRailOneDragon/commit/6531cfa8f64ea1fc90644d2fb611c71745e8985e",
+        "additions": 668,
+        "deletions": 145,
+        "images": 6,
+        "timestamp": "2026-02-14T21:50:45+08:00"
+      },
+      {
+        "index": 3,
+        "url": "https://github.com/OneDragon-Anything/StarRailOneDragon/commit/0a4c9d5730db0f948a9ab8fc444c48662a89b72f",
+        "additions": 91,
+        "deletions": 9,
+        "images": 0,
+        "timestamp": "2026-02-14T21:52:21+08:00"
       }
     ]
   }
