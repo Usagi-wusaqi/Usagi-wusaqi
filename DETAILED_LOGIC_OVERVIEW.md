@@ -399,10 +399,4 @@ python scripts/generate-stats.py --help
 
 ## 📄 许可证
 
-本项目采用 [MIT License](LICENSE) 开源协议。
-
-**你可以：**
-- ✅ 商业使用、修改代码、分发代码、私人使用
-
-**要求：**
-- 📋 保留原始的版权声明和许可证文本
+本项目采用 [0BSD License](LICENSE) 开源协议 — 你可以自由地商业使用、修改、分发，无任何要求。
