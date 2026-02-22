@@ -1,9 +1,9 @@
-# Python 缓存文件
+# Python 缂撳瓨鏂囦欢
 __pycache__/
 *.py[cod]
 *$py.class
 
-# 分发 / 打包
+# 鍒嗗彂 / 鎵撳寘
 .Python
 build/
 develop-eggs/
@@ -26,8 +26,7 @@ MANIFEST
 *.manifest
 *.spec
 
-# 单元测试 / 覆盖率报告
-htmlcov/
+# 鍗曞厓娴嬭瘯 / 瑕嗙洊鐜囨姤鍛?htmlcov/
 .tox/
 .coverage
 .coverage.*
@@ -38,7 +37,7 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 
-# 环境变量
+# 鐜鍙橀噺
 .env
 .venv
 env/
@@ -54,7 +53,7 @@ venv.bak/
 *.swo
 *~
 
-# 操作系统
+# 鎿嶄綔绯荤粺
 .DS_Store
 .DS_Store?
 ._*
@@ -63,7 +62,8 @@ venv.bak/
 ehthumbs.db
 Thumbs.db
 
-# 临时文件
+# 涓存椂鏂囦欢
 temp_repos/
 *.tmp
 *.temp
+.vercel
