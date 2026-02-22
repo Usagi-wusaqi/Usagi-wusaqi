@@ -27,8 +27,8 @@ I'm a code enthusiast who loves turning ideas into reality through code. With a 
 <table width="100%" cellspacing="0" cellpadding="0">
   <tr>
     <td align="center" valign="top" width="50%">
-      ➕additions: 19059 ➖deletions: 9915 🖼️images: 129<br>
-      <small><em>Last updated: 2026-02-20 09:20:32 UTC+8</em></small><br>
+      ➕additions: 19417 ➖deletions: 9986 🖼️images: 132<br>
+      <small><em>Last updated: 2026-02-22 08:29:28 UTC+8</em></small><br>
       <img src="https://komarev.com/ghpvc/?username=Usagi-wusaqi&style=flat-square&color=blue" alt="Profile Views"/>
       <a href="LICENSE"><img src="https://img.shields.io/badge/License-0BSD-blue.svg?style=flat-square" alt="License: 0BSD"/></a><br><br>
       <img src="https://github-readme-stats-navy-six-17.vercel.app/api?username=Usagi-wusaqi&show_icons=true&locale=en&include_all_commits=true&rank_icon=percentile&show=reviews,prs_merged,prs_merged_percentage,discussions_started,discussions_answered&count_private=true&cache_seconds=300&disable_animations=false&hide_border=true" alt="GitHub stats" width="100%" />
