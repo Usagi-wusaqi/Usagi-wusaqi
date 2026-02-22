@@ -1,44 +1,11 @@
 {
-  "_metadata": {
-    "total_commits": 4,
-    "total_additions": 845,
-    "total_deletions": 184,
-    "total_images": 6
-  },
+  "_metadata": {"total_commits": 4, "total_images": 6},
   "data": {
     "StarRailOneDragon": [
-      {
-        "index": 1,
-        "url": "https://github.com/OneDragon-Anything/StarRailOneDragon/commit/4c7d2aa69d05b35293acc6a50e1d2b634eb10a8b",
-        "additions": 44,
-        "deletions": 4,
-        "images": 0,
-        "timestamp": "2026-01-19T21:20:37+08:00"
-      },
-      {
-        "index": 2,
-        "url": "https://github.com/OneDragon-Anything/StarRailOneDragon/commit/6531cfa8f64ea1fc90644d2fb611c71745e8985e",
-        "additions": 668,
-        "deletions": 145,
-        "images": 6,
-        "timestamp": "2026-02-14T21:50:45+08:00"
-      },
-      {
-        "index": 3,
-        "url": "https://github.com/OneDragon-Anything/StarRailOneDragon/commit/0a4c9d5730db0f948a9ab8fc444c48662a89b72f",
-        "additions": 91,
-        "deletions": 9,
-        "images": 0,
-        "timestamp": "2026-02-14T21:52:21+08:00"
-      },
-      {
-        "index": 4,
-        "url": "https://github.com/OneDragon-Anything/StarRailOneDragon/commit/a956a449de20e4feed7f5151fcff511f7c8c897c",
-        "additions": 42,
-        "deletions": 26,
-        "images": 0,
-        "timestamp": "2026-02-19T20:38:20+08:00"
-      }
+      {"index": 1, "images": 0, "timestamp": "2026-01-19T21:20:37+08:00", "url": "https://github.com/OneDragon-Anything/StarRailOneDragon/commit/4c7d2aa69d05b35293acc6a50e1d2b634eb10a8b"},
+      {"index": 2, "images": 6, "timestamp": "2026-02-14T21:50:45+08:00", "url": "https://github.com/OneDragon-Anything/StarRailOneDragon/commit/6531cfa8f64ea1fc90644d2fb611c71745e8985e"},
+      {"index": 3, "images": 0, "timestamp": "2026-02-14T21:52:21+08:00", "url": "https://github.com/OneDragon-Anything/StarRailOneDragon/commit/0a4c9d5730db0f948a9ab8fc444c48662a89b72f"},
+      {"index": 4, "images": 0, "timestamp": "2026-02-19T20:38:20+08:00", "url": "https://github.com/OneDragon-Anything/StarRailOneDragon/commit/a956a449de20e4feed7f5151fcff511f7c8c897c"}
     ]
   }
 }

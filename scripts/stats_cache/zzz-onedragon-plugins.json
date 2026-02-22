@@ -1,84 +1,16 @@
 {
-  "_metadata": {
-    "total_commits": 9,
-    "total_additions": 1582,
-    "total_deletions": 505,
-    "total_images": 0
-  },
+  "_metadata": {"total_commits": 9, "total_images": 0},
   "data": {
     "zzz-onedragon-plugins": [
-      {
-        "index": 1,
-        "url": "https://github.com/Usagi-wusaqi/zzz-onedragon-plugins/commit/1ece6dfd421018a9f36911288bb58caf9227df3e",
-        "additions": 137,
-        "deletions": 0,
-        "images": 0,
-        "timestamp": "2026-01-30T14:29:44+08:00"
-      },
-      {
-        "index": 2,
-        "url": "https://github.com/Usagi-wusaqi/zzz-onedragon-plugins/commit/ac8646c5c94705e850ee249c7afbab5ea6e71d3f",
-        "additions": 200,
-        "deletions": 0,
-        "images": 0,
-        "timestamp": "2026-01-30T15:49:31+08:00"
-      },
-      {
-        "index": 3,
-        "url": "https://github.com/Usagi-wusaqi/zzz-onedragon-plugins/commit/02fd4ca08fdcd2d896da92587d476e8e86e34c9c",
-        "additions": 17,
-        "deletions": 0,
-        "images": 0,
-        "timestamp": "2026-01-30T15:49:36+08:00"
-      },
-      {
-        "index": 4,
-        "url": "https://github.com/Usagi-wusaqi/zzz-onedragon-plugins/commit/69044943402e36c7d9192fa6e0384912565b8341",
-        "additions": 281,
-        "deletions": 55,
-        "images": 0,
-        "timestamp": "2026-01-31T22:44:58+08:00"
-      },
-      {
-        "index": 5,
-        "url": "https://github.com/Usagi-wusaqi/zzz-onedragon-plugins/commit/1e75e34d1f92bf02b7fb7ac561aff45d150caa64",
-        "additions": 205,
-        "deletions": 0,
-        "images": 0,
-        "timestamp": "2026-02-01T00:22:56+08:00"
-      },
-      {
-        "index": 6,
-        "url": "https://github.com/Usagi-wusaqi/zzz-onedragon-plugins/commit/df9f8d822f570ec72b15866aac1a2693c6fd4030",
-        "additions": 68,
-        "deletions": 61,
-        "images": 0,
-        "timestamp": "2026-02-01T00:24:29+08:00"
-      },
-      {
-        "index": 7,
-        "url": "https://github.com/Usagi-wusaqi/zzz-onedragon-plugins/commit/138df2635f1374ca7be81c6f2324620f99e78cfb",
-        "additions": 169,
-        "deletions": 238,
-        "images": 0,
-        "timestamp": "2026-02-02T18:36:25+08:00"
-      },
-      {
-        "index": 8,
-        "url": "https://github.com/Usagi-wusaqi/zzz-onedragon-plugins/commit/9ac7a98f7219945dc8facf6c17b6a24e45a54d4b",
-        "additions": 443,
-        "deletions": 145,
-        "images": 0,
-        "timestamp": "2026-02-08T16:51:53+08:00"
-      },
-      {
-        "index": 9,
-        "url": "https://github.com/Usagi-wusaqi/zzz-onedragon-plugins/commit/7276a6f3c4a4a08d2dd368c7e2edc7841e7d481b",
-        "additions": 62,
-        "deletions": 6,
-        "images": 0,
-        "timestamp": "2026-02-09T12:56:49+08:00"
-      }
+      {"index": 1, "images": 0, "timestamp": "2026-01-30T14:29:44+08:00", "url": "https://github.com/Usagi-wusaqi/zzz-onedragon-plugins/commit/1ece6dfd421018a9f36911288bb58caf9227df3e"},
+      {"index": 2, "images": 0, "timestamp": "2026-01-30T15:49:31+08:00", "url": "https://github.com/Usagi-wusaqi/zzz-onedragon-plugins/commit/ac8646c5c94705e850ee249c7afbab5ea6e71d3f"},
+      {"index": 3, "images": 0, "timestamp": "2026-01-30T15:49:36+08:00", "url": "https://github.com/Usagi-wusaqi/zzz-onedragon-plugins/commit/02fd4ca08fdcd2d896da92587d476e8e86e34c9c"},
+      {"index": 4, "images": 0, "timestamp": "2026-01-31T22:44:58+08:00", "url": "https://github.com/Usagi-wusaqi/zzz-onedragon-plugins/commit/69044943402e36c7d9192fa6e0384912565b8341"},
+      {"index": 5, "images": 0, "timestamp": "2026-02-01T00:22:56+08:00", "url": "https://github.com/Usagi-wusaqi/zzz-onedragon-plugins/commit/1e75e34d1f92bf02b7fb7ac561aff45d150caa64"},
+      {"index": 6, "images": 0, "timestamp": "2026-02-01T00:24:29+08:00", "url": "https://github.com/Usagi-wusaqi/zzz-onedragon-plugins/commit/df9f8d822f570ec72b15866aac1a2693c6fd4030"},
+      {"index": 7, "images": 0, "timestamp": "2026-02-02T18:36:25+08:00", "url": "https://github.com/Usagi-wusaqi/zzz-onedragon-plugins/commit/138df2635f1374ca7be81c6f2324620f99e78cfb"},
+      {"index": 8, "images": 0, "timestamp": "2026-02-08T16:51:53+08:00", "url": "https://github.com/Usagi-wusaqi/zzz-onedragon-plugins/commit/9ac7a98f7219945dc8facf6c17b6a24e45a54d4b"},
+      {"index": 9, "images": 0, "timestamp": "2026-02-09T12:56:49+08:00", "url": "https://github.com/Usagi-wusaqi/zzz-onedragon-plugins/commit/7276a6f3c4a4a08d2dd368c7e2edc7841e7d481b"}
     ]
   }
 }

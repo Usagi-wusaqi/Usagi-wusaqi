@@ -1,92 +1,17 @@
 {
-  "_metadata": {
-    "total_commits": 10,
-    "total_additions": 3164,
-    "total_deletions": 3182,
-    "total_images": 8
-  },
+  "_metadata": {"total_commits": 10, "total_images": 8},
   "data": {
     "onedragon-anything.github.io": [
-      {
-        "index": 1,
-        "url": "https://github.com/OneDragon-Anything/onedragon-anything.github.io/commit/f0da2742001764e4cc144862fdf6e22955d0f0c4",
-        "additions": 30,
-        "deletions": 19,
-        "images": 0,
-        "timestamp": "2025-09-01T17:14:35+08:00"
-      },
-      {
-        "index": 2,
-        "url": "https://github.com/OneDragon-Anything/onedragon-anything.github.io/commit/68e238a79cd6164bab8964ec8806c4546b918350",
-        "additions": 78,
-        "deletions": 64,
-        "images": 0,
-        "timestamp": "2025-09-26T21:55:19+08:00"
-      },
-      {
-        "index": 3,
-        "url": "https://github.com/OneDragon-Anything/onedragon-anything.github.io/commit/202b9d9f2dcf62fe86ef249a3e94b42a78ab429a",
-        "additions": 58,
-        "deletions": 54,
-        "images": 0,
-        "timestamp": "2025-09-27T23:28:36+08:00"
-      },
-      {
-        "index": 4,
-        "url": "https://github.com/OneDragon-Anything/onedragon-anything.github.io/commit/7f7f39c2abd0cbf3b2d1d65e976c3d568fff3fca",
-        "additions": 117,
-        "deletions": 81,
-        "images": 0,
-        "timestamp": "2025-09-28T23:59:34+08:00"
-      },
-      {
-        "index": 5,
-        "url": "https://github.com/OneDragon-Anything/onedragon-anything.github.io/commit/a0226d88ba2afdeb173637785838107de5448a7d",
-        "additions": 105,
-        "deletions": 82,
-        "images": 4,
-        "timestamp": "2025-09-28T23:59:47+08:00"
-      },
-      {
-        "index": 6,
-        "url": "https://github.com/OneDragon-Anything/onedragon-anything.github.io/commit/1510c495434e743aa759d7c28ebaa12263e22df3",
-        "additions": 1,
-        "deletions": 1,
-        "images": 1,
-        "timestamp": "2025-10-06T17:33:47+08:00"
-      },
-      {
-        "index": 7,
-        "url": "https://github.com/OneDragon-Anything/onedragon-anything.github.io/commit/602fd0f6d91cb47a35210637481edd0a811737e6",
-        "additions": 241,
-        "deletions": 195,
-        "images": 3,
-        "timestamp": "2025-12-07T22:57:07+08:00"
-      },
-      {
-        "index": 8,
-        "url": "https://github.com/OneDragon-Anything/onedragon-anything.github.io/commit/91f1c96f7ccd66bf770c5375f636b3431dfa746f",
-        "additions": 289,
-        "deletions": 195,
-        "images": 0,
-        "timestamp": "2025-12-14T15:07:52+08:00"
-      },
-      {
-        "index": 9,
-        "url": "https://github.com/OneDragon-Anything/onedragon-anything.github.io/commit/fd3a13f409fbaf49d1f0e126145e12ca122d8419",
-        "additions": 1,
-        "deletions": 1,
-        "images": 0,
-        "timestamp": "2025-12-15T00:20:02+08:00"
-      },
-      {
-        "index": 10,
-        "url": "https://github.com/OneDragon-Anything/onedragon-anything.github.io/commit/36c64c6be73a01c465b15950da6b917754dd3498",
-        "additions": 2244,
-        "deletions": 2490,
-        "images": 0,
-        "timestamp": "2026-02-10T13:08:09+08:00"
-      }
+      {"index": 1, "images": 0, "timestamp": "2025-09-01T17:14:35+08:00", "url": "https://github.com/OneDragon-Anything/onedragon-anything.github.io/commit/f0da2742001764e4cc144862fdf6e22955d0f0c4"},
+      {"index": 2, "images": 0, "timestamp": "2025-09-26T21:55:19+08:00", "url": "https://github.com/OneDragon-Anything/onedragon-anything.github.io/commit/68e238a79cd6164bab8964ec8806c4546b918350"},
+      {"index": 3, "images": 0, "timestamp": "2025-09-27T23:28:36+08:00", "url": "https://github.com/OneDragon-Anything/onedragon-anything.github.io/commit/202b9d9f2dcf62fe86ef249a3e94b42a78ab429a"},
+      {"index": 4, "images": 0, "timestamp": "2025-09-28T23:59:34+08:00", "url": "https://github.com/OneDragon-Anything/onedragon-anything.github.io/commit/7f7f39c2abd0cbf3b2d1d65e976c3d568fff3fca"},
+      {"index": 5, "images": 4, "timestamp": "2025-09-28T23:59:47+08:00", "url": "https://github.com/OneDragon-Anything/onedragon-anything.github.io/commit/a0226d88ba2afdeb173637785838107de5448a7d"},
+      {"index": 6, "images": 1, "timestamp": "2025-10-06T17:33:47+08:00", "url": "https://github.com/OneDragon-Anything/onedragon-anything.github.io/commit/1510c495434e743aa759d7c28ebaa12263e22df3"},
+      {"index": 7, "images": 3, "timestamp": "2025-12-07T22:57:07+08:00", "url": "https://github.com/OneDragon-Anything/onedragon-anything.github.io/commit/602fd0f6d91cb47a35210637481edd0a811737e6"},
+      {"index": 8, "images": 0, "timestamp": "2025-12-14T15:07:52+08:00", "url": "https://github.com/OneDragon-Anything/onedragon-anything.github.io/commit/91f1c96f7ccd66bf770c5375f636b3431dfa746f"},
+      {"index": 9, "images": 0, "timestamp": "2025-12-15T00:20:02+08:00", "url": "https://github.com/OneDragon-Anything/onedragon-anything.github.io/commit/fd3a13f409fbaf49d1f0e126145e12ca122d8419"},
+      {"index": 10, "images": 0, "timestamp": "2026-02-10T13:08:09+08:00", "url": "https://github.com/OneDragon-Anything/onedragon-anything.github.io/commit/36c64c6be73a01c465b15950da6b917754dd3498"}
     ]
   }
 }
