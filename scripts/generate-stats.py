@@ -5,7 +5,7 @@
 - 统计所有仓库的图片贡献（images 数量）
 - 智能缓存系统，避免重复分析已处理的 commits
 - 支持 Fork 仓库（直接克隆上游仓库获取完整历史）
-- 自动更新 README.md 统计数据和时间
+- 从模板生成 README.md，输出 stats.json 供 Vercel 卡片读取
 
 ## 数据源策略
 - Git log 优先：完整历史数据，准确可靠
@@ -26,7 +26,7 @@
 
 ## 更新策略
 - 只有运行脚本时才更新数据
-- 使用正则匹配替换，保持 README.md 原有格式
+- 从模板生成 README，替换用户名占位符
 - 永久保存历史数据，智能清理过期缓存
 """
 
@@ -77,14 +77,12 @@ PER_PAGE = 100
 PROGRESS_INTERVAL = 10
 IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp", ".ico"]
 README_FILE_PATH = Path(__file__).parent.parent / "README.md"
+STATS_JSON_PATH = Path(__file__).parent.parent / "stats.json"
 CACHE_DIR = Path(__file__).parent / "stats_cache"
 AUTHOR_IDENTITIES_FILE = CACHE_DIR / "author_identities.json"
 
-# 时间和格式常量
+# 时间格式常量
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S UTC+8"
-TIME_PATTERN = r"(Last updated: )\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}( UTC\+8)?"
-IMAGES_PATTERN = r"(🖼️images: )\d+"
-IMAGES_EXTRACT_PATTERN = r"🖼️images: (\d+)"
 
 # Git 解析常量
 MIN_STATUS_PARTS = 2  # git show --name-status 输出至少需要的字段数
@@ -476,9 +474,7 @@ def save_cache(repo_name: str, cache_data: CacheData) -> bool:
         sorted_cache_data = sort_and_reindex_commits(cache_data)
 
         # 计算统计信息
-        total_commits, total_images = (
-            calculate_cache_statistics(sorted_cache_data)
-        )
+        total_commits, total_images = calculate_cache_statistics(sorted_cache_data)
 
         cache_data_with_metadata: dict[str, dict[str, int] | CacheData] = {
             "_metadata": {
@@ -654,8 +650,7 @@ def clean_stale_cache(
         new_cache_list = list(cached_items_out_of_range) + [
             item
             for item in cached_items_in_range
-            if extract_sha_from_cache_item(item)
-            not in stale_commits
+            if extract_sha_from_cache_item(item) not in stale_commits
         ]
         cache_data[repo_key] = new_cache_list
 
@@ -814,9 +809,7 @@ def get_commits_from_git_log(
 
     for author in authors:
         safe_author = author.replace('"', '\\"')
-        git_cmd = (
-            f'git log origin/{default_branch} --author="{safe_author}" --format="%H%n%aI"'
-        )
+        git_cmd = f'git log origin/{default_branch} --author="{safe_author}" --format="%H%n%aI"'
         output, returncode = run_command(git_cmd, cwd=repo_path)
 
         if returncode != 0:
@@ -1115,13 +1108,11 @@ def analyze_commits(
     )
 
     # 处理所有 commits
-    total_images, cache_hits, cache_misses = (
-        _process_all_commits(
-            all_commits=all_commits,
-            cache_data=cache_data,
-            ctx=ctx,
-            include_images=include_images,
-        )
+    total_images, cache_hits, cache_misses = _process_all_commits(
+        all_commits=all_commits,
+        cache_data=cache_data,
+        ctx=ctx,
+        include_images=include_images,
     )
 
     # 显示统计信息
@@ -1187,9 +1178,7 @@ def _process_all_commits(
             commit_data = _get_commit_details_from_api(ctx.owner, ctx.repo_name, sha)
 
         # 计算图片统计
-        images = _calculate_commit_stats(
-            commit_data, include_images=include_images
-        )
+        images = _calculate_commit_stats(commit_data, include_images=include_images)
         total_images += images
 
         # 更新缓存（--no-images 模式下不写入缓存，避免污染）
@@ -1307,9 +1296,7 @@ def process_repos(repos: list[RepoInfo], *, include_images: bool = True) -> Stat
             )
 
             # 分析图片贡献
-            repo_images = analyze_commits(
-                ctx, include_images=include_images
-            )
+            repo_images = analyze_commits(ctx, include_images=include_images)
 
             total_images += repo_images
 
@@ -1379,18 +1366,15 @@ def update_usernames_in_readme(content: str) -> str:
     return content
 
 
-def generate_readme_from_template(template_path: Path, stats: StatsData) -> str:
+def generate_readme_from_template(template_path: Path) -> str:
     """从模板生成 README 内容"""
     with template_path.open(encoding="utf-8") as f:
         content = f.read()
 
     # 准备替换数据
-    current_time = get_current_time()
     replacements = {
         "ORIGIN_USERNAME": ORIGIN_USERNAME,
         "UPSTREAM_USERNAME": UPSTREAM_USERNAME,
-        "TOTAL_IMAGES": str(stats.get("total_images", 0)),
-        "LAST_UPDATED": current_time,
     }
 
     # 替换所有占位符
@@ -1400,21 +1384,8 @@ def generate_readme_from_template(template_path: Path, stats: StatsData) -> str:
     return content
 
 
-def update_existing_readme(
-    content: str,
-    stats: StatsData,
-) -> str:
-    """更新现有 README 内容"""
-    # 替换图片统计数字
-    img = stats.get("total_images", 0)
-    content = re.sub(IMAGES_PATTERN, f"\\g<1>{img}", content)
-
-    # 更新时间戳
-    current_time = get_current_time()
-    time_replacement = f"\\g<1>{current_time}"
-    content = re.sub(TIME_PATTERN, time_replacement, content)
-
-    # 更新用户名
+def update_existing_readme(content: str) -> str:
+    """更新现有 README 内容（回退路径：仅更新用户名）"""
     return update_usernames_in_readme(content)
 
 
@@ -1440,36 +1411,49 @@ def print_update_summary(stats: StatsData) -> None:
     print_color(f"   👑 上游用户名: {UPSTREAM_USERNAME}", Colors.NC)
 
 
-def _read_current_stats_from_readme() -> StatsData | None:
-    """从现有 README.md 中读取当前的统计数字
+def save_stats_json(stats: StatsData) -> None:
+    """输出 stats.json 供 Vercel Serverless Function 读取"""
+    data = {
+        "total_images": stats.get("total_images", 0),
+        "last_updated": get_current_time(),
+    }
+    try:
+        with STATS_JSON_PATH.open("w", encoding="utf-8", newline="\n") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        print_color(f"✅ stats.json 已更新: {STATS_JSON_PATH}", Colors.GREEN)
+    except OSError as e:
+        print_color(f"⚠️  保存 stats.json 失败: {e}", Colors.RED)
+
+
+def _read_current_stats() -> StatsData | None:
+    """从 stats.json 中读取当前的统计数字
 
     返回: 包含 total_images 的字典，或 None
     """
-    if not README_FILE_PATH.exists():
+    if not STATS_JSON_PATH.exists():
         return None
 
     try:
-        with README_FILE_PATH.open(encoding="utf-8") as f:
-            content = f.read()
-        match = re.search(IMAGES_EXTRACT_PATTERN, content)
-        if match:
+        with STATS_JSON_PATH.open(encoding="utf-8") as f:
+            data = json.load(f)
+        if "total_images" in data:
             return {
-                "total_images": int(match.group(1)),
+                "total_images": int(data["total_images"]),
             }
-    except (OSError, UnicodeDecodeError, ValueError):
+    except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
         pass
 
     return None
 
 
 def update_readme(stats: StatsData) -> bool:
-    """更新 README.md 中的统计数据和时间（支持模板系统）
+    """更新 README.md（支持模板系统）
 
     功能：
     - 如果存在 README.template.md，从模板生成完整的 README
-    - 如果不存在模板，使用正则表达式更新现有 README
+    - 如果不存在模板，仅更新现有 README 中的用户名
     - 如果统计数据未变化，跳过更新避免无意义的提交
-    - 支持可重复运行，完美解决占位符替换问题
 
     参数：
     - stats: 统计数据字典，包含 total_images
@@ -1477,10 +1461,9 @@ def update_readme(stats: StatsData) -> bool:
     print_color("📝 更新 README.md...", Colors.YELLOW)
 
     # 先检查统计数据是否有变化
-    old_stats = _read_current_stats_from_readme()
-    if (
-        old_stats is not None
-        and old_stats.get("total_images") == stats.get("total_images", 0)
+    old_stats = _read_current_stats()
+    if old_stats is not None and old_stats.get("total_images") == stats.get(
+        "total_images", 0
     ):
         print_color("ℹ️  统计数据未变化，跳过 README 更新", Colors.YELLOW)
         return True
@@ -1490,9 +1473,9 @@ def update_readme(stats: StatsData) -> bool:
     if template_path.exists():
         # 使用模板系统
         print_color("📄 使用模板系统生成 README", Colors.GREEN)
-        content = generate_readme_from_template(template_path, stats)
+        content = generate_readme_from_template(template_path)
     else:
-        # 使用传统方式更新现有 README
+        # 回退：仅更新用户名
         print_color("⚠️  未发现模板文件，更新现有 README", Colors.YELLOW)
 
         if not README_FILE_PATH.exists():
@@ -1503,7 +1486,7 @@ def update_readme(stats: StatsData) -> bool:
         with README_FILE_PATH.open(encoding="utf-8") as f:
             existing_content = f.read()
 
-        content = update_existing_readme(existing_content, stats)
+        content = update_existing_readme(existing_content)
 
     # 保存 README.md
     if not save_readme_content(content):
@@ -1564,6 +1547,9 @@ def main() -> int:
     # 更新 README.md
     if not update_readme(stats):
         return 1
+
+    # 输出 stats.json 供 Vercel Serverless Function 读取
+    save_stats_json(stats)
 
     print_separator("✅ 脚本执行完成！")
     return 0
