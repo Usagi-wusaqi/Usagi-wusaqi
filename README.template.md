@@ -35,8 +35,7 @@ I'm a code enthusiast who loves turning ideas into reality through code. With a 
 <table width="100%" cellspacing="0" cellpadding="0">
   <tr>
     <td align="center" valign="top" width="50%">
-      <img src="https://usagi-wusaqi.vercel.app/api/contributions?username={{ORIGIN_USERNAME}}&hide_border=true&custom_title=Code%20Contributions&cache_seconds=86400" alt="Code Contributions" width="100%" /><br>
-      🖼️images: {{TOTAL_IMAGES}} <small><em>(Last updated: {{LAST_UPDATED}})</em></small><br>
+      <img src="https://usagi-wusaqi.vercel.app/api/contributions?username={{ORIGIN_USERNAME}}&hide_border=true&custom_title=Code%20Contributions&cache_seconds=86400" alt="Code Contributions" width="100%"/><br>
       <img src="https://github-readme-stats-navy-six-17.vercel.app/api?username={{ORIGIN_USERNAME}}&show_icons=true&locale=en&include_all_commits=true&rank_icon=percentile&show=reviews,prs_merged,prs_merged_percentage,discussions_started,discussions_answered&count_private=true&cache_seconds=300&disable_animations=false&hide_border=true&custom_title=GitHub%20Stats" alt="GitHub stats" width="100%" />
     </td>
     <td align="center" valign="top" width="50%">

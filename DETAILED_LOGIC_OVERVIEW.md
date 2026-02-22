@@ -47,7 +47,7 @@ python scripts/generate-stats.py --no-images    # 不统计图片
 python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（不会重新生成统计）
 ```
 
-> **注意：** 代码贡献统计（additions/deletions）已改用 Vercel 动态卡片实时渲染，脚本仅负责图片统计。
+> **注意：** 代码贡献统计（additions/deletions/net/images）已改用 Vercel 动态卡片实时渲染，脚本仅负责生成 `stats.json` 供卡片读取图片统计。
 
 ---
 
@@ -79,10 +79,8 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（
 | ------ | ---- | ---- |
 | `{{ORIGIN_USERNAME}}` | 远端用户名 | `your-username` |
 | `{{UPSTREAM_USERNAME}}` | 上游用户名 | `upstream-username` |
-| `{{TOTAL_IMAGES}}` | 总图片数量 | `109` |
-| `{{LAST_UPDATED}}` | 最后更新时间 | `2026-01-28 15:30:45 UTC+8` |
 
-> 代码贡献统计（additions/deletions）已改用 [Vercel 动态卡片](#vercel-动态贡献卡片)，不再作为占位符。
+> 代码贡献统计（additions/deletions/net/images）已改用 [Vercel 动态卡片](#vercel-动态贡献卡片) 实时渲染，不再作为模板占位符。
 
 ### 使用示例
 
@@ -91,8 +89,6 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（
 # {{ORIGIN_USERNAME}} 的项目
 
 ![Stats](https://github-readme-stats.vercel.app/api?username={{ORIGIN_USERNAME}})
-
-🖼️images: {{TOTAL_IMAGES}} (Last updated: {{LAST_UPDATED}})
 ```
 
 **生成的结果：**
@@ -100,8 +96,6 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（
 # your-username 的项目
 
 ![Stats](https://github-readme-stats.vercel.app/api?username=your-username)
-
-🖼️images: 109 (Last updated: 2026-01-28 15:30:45 UTC+8)
 ```
 
 ---
@@ -118,8 +112,8 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（
 ### 📊 数据统计
 - **图片资源** - 统计图片文件（.png, .jpg, .jpeg, .gif, .svg, .webp, .ico, .bmp）
 - **Git log 优先** - 优先使用本地 git log（完整历史），API 仅在失败时兜底
-- **实时更新** - 自动更新 README 中的统计数字和时间戳
-- **代码贡献** - 通过 Vercel 动态卡片实时渲染（additions/deletions/net），无需脚本统计
+- **实时更新** - 生成 `stats.json` 供 Vercel 卡片读取，并从模板重新生成 README
+- **代码贡献** - 通过 Vercel 动态卡片实时渲染（additions/deletions/net/images），无需脚本统计
 
 ### 🍴 Fork 友好设计
 - **自动检测** - 智能识别 Fork 仓库，分析上游仓库而不是 Fork 本身
@@ -130,7 +124,7 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（
 ### 🔧 技术优势
 - **零依赖** - 只使用 Python 标准库，无需额外安装
 - **容错性强** - git log 失败时自动降级使用 API 兜底
-- **格式保持** - 精确替换统计数字，完全保持 README 原有格式
+- **格式保持** - 从模板生成 README，保持布局一致；回退模式用正则精确替换
 - **向后兼容** - 支持新旧缓存格式自动转换
 
 ---
@@ -224,15 +218,15 @@ env:
 ### 工作流程
 
 ```text
-1. 初始化 → 2. 获取仓库列表 → 3. 处理每个仓库 → 4. 变化检测 → 5. 更新 README → 6. 清理
+1. 初始化 → 2. 获取仓库列表 → 3. 处理每个仓库 → 4. 变化检测 → 5. 输出结果 → 6. 清理
    ↓              ↓                ↓               ↓              ↓            ↓
-环境变量配置    GitHub API      智能缓存+分析    比较新旧数据    正则替换     临时文件清理
+环境变量配置    GitHub API      智能缓存+分析    比较新旧数据    模板生成+stats.json  临时文件清理
 ```
 
 ### 智能跳过
 
-- 更新 README 前会先从现有 README 提取当前图片统计数字
-- 如果 images 数字未变化，跳过 README 更新
+- 更新前会先从 `stats.json` 读取当前图片统计数字
+- 如果 images 数字未变化，跳过 README 和 stats.json 更新
 - 避免仅因时间戳变化而产生无意义的提交
 
 ### 数据源策略
@@ -243,13 +237,13 @@ env:
 
 ### Vercel 动态贡献卡片
 
-代码贡献统计（additions/deletions/net）通过独立的 Vercel Serverless Function 实时渲染为 SVG 卡片：
+代码贡献与图片统计通过 Vercel Serverless Function 实时渲染为 SVG 卡片：
 
 - **端点** - `/api/contributions?username=xxx`
-- **数据源** - GitHub Stats/Contributors API 汇总用户所有仓库的贡献数据
-- **展示** - 水平三列布局（Additions / Deletions / Net）
+- **数据源** - GitHub Stats/Contributors API 汇总代码贡献；`stats.json`（由脚本生成）提供图片统计
+- **展示** - 水平四列布局（Additions / Deletions / Net / Images），viewBox 1200×200 与 Activity Graph 等高
 - **标题** - 自动从 GitHub API 获取 display name
-- **自定义** - 支持 `title_color`、`text_color`、`bg_color`、`hide_border` 等参数
+- **自定义** - 支持 `custom_title`、`title_color`、`text_color`、`bg_color`、`hide_border` 等参数
 - **缓存** - 通过 `cache_seconds` 参数控制（默认 86400 秒）
 - **部署** - 需要在 Vercel 项目中配置 `PAT_1` 环境变量（GitHub PAT）
 
