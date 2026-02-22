@@ -1,4 +1,4 @@
-# GitHub 贡献统计脚本
+# GitHub 图片统计 & 动态贡献卡片
 
 ## 📋 目录
 
@@ -19,32 +19,21 @@
 
    > **可选：** 如需统计私有仓库，可在 `Settings > Secrets and variables > Actions` 中创建 PAT（需要 `repo` 权限），用它覆盖 `GITHUB_TOKEN`
 
-   **方式一：推送代码自动触发**
-   ```bash
-   git add .
-   git commit -m "Update content"
-   git push
-   ```
-
-   **方式二：手动触发**
+   **方式一：手动触发**
    - 进入仓库的 `Actions` 标签页
    - 选择 "更新 README 统计数据" 工作流
    - 点击 "Run workflow" 按钮
    - 在弹出的对话框中点击绿色的 "Run workflow" 按钮
    - 等待几分钟，工作流完成后 README.md 会自动更新
 
-   **方式三：定时触发**
-   - 已默认配置每周日零点整自动运行 (UTC时间)
-   - 无需手动操作，系统会自动更新统计数据
-   - 工作流可以配置为定时运行（如每天或每周）
-   - 在 `.github/workflows/` 中的 YAML 文件里添加 `schedule` 触发器：
+   **方式二：定时触发**
+   - 已配置每季度首日（3/1、6/1、9/1、12/1）北京时间 08:00 自动运行
+   - 可在 `.github/workflows/` 中的 YAML 文件里修改 `schedule` 触发器：
    ```yaml
    on:
-     push:
-       branches: [ main, master ]
      workflow_dispatch:
      schedule:
-       - cron: '0 0 * * 0'  # 默认每周日零点整触发 (UTC时间)
+       - cron: '0 0 1 3,6,9,12 *'  # 每季度首日 UTC 00:00（北京时间 08:00）
    ```
 
 ### 本地运行
@@ -57,6 +46,8 @@ python scripts/generate-stats.py
 python scripts/generate-stats.py --no-images    # 不统计图片
 python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（不会重新生成统计）
 ```
+
+> **注意：** 代码贡献统计（additions/deletions）已改用 Vercel 动态卡片实时渲染，脚本仅负责图片统计。
 
 ---
 
@@ -88,10 +79,10 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（
 | ------ | ---- | ---- |
 | `{{ORIGIN_USERNAME}}` | 远端用户名 | `your-username` |
 | `{{UPSTREAM_USERNAME}}` | 上游用户名 | `upstream-username` |
-| `{{TOTAL_ADDITIONS}}` | 总增加行数 | `15316` |
-| `{{TOTAL_DELETIONS}}` | 总删除行数 | `4231` |
 | `{{TOTAL_IMAGES}}` | 总图片数量 | `109` |
 | `{{LAST_UPDATED}}` | 最后更新时间 | `2026-01-28 15:30:45 UTC+8` |
+
+> 代码贡献统计（additions/deletions）已改用 [Vercel 动态卡片](#vercel-动态贡献卡片)，不再作为占位符。
 
 ### 使用示例
 
@@ -101,9 +92,7 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（
 
 ![Stats](https://github-readme-stats.vercel.app/api?username={{ORIGIN_USERNAME}})
 
-统计数据：➕additions: {{TOTAL_ADDITIONS}} ➖deletions: {{TOTAL_DELETIONS}}
-
-最后更新：{{LAST_UPDATED}}
+🖼️images: {{TOTAL_IMAGES}} (Last updated: {{LAST_UPDATED}})
 ```
 
 **生成的结果：**
@@ -112,9 +101,7 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（
 
 ![Stats](https://github-readme-stats.vercel.app/api?username=your-username)
 
-统计数据：➕additions: 15316 ➖deletions: 4231
-
-最后更新：2026-01-28 15:30:45 UTC+8
+🖼️images: 109 (Last updated: 2026-01-28 15:30:45 UTC+8)
 ```
 
 ---
@@ -122,17 +109,17 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（
 ## ⭐ 核心特性
 
 ### 🚀 自动化与智能化
-- **GitHub Actions 集成** - 推送代码或手动触发自动更新
+- **GitHub Actions 集成** - 手动触发或每季度定时自动更新
 - **智能缓存系统** - 95%+ 缓存命中率，显著提升运行速度
 - **增量更新** - 只处理新增的 commits，避免重复分析
 - **智能清理** - 检测变基操作，只删除消失的 commits
 - **智能跳过** - 统计数据未变化时不更新 README，避免无意义的提交
 
-### 📊 全面的数据统计
-- **代码贡献** - 统计所有仓库的代码增删行数
+### 📊 数据统计
 - **图片资源** - 统计图片文件（.png, .jpg, .jpeg, .gif, .svg, .webp, .ico, .bmp）
 - **Git log 优先** - 优先使用本地 git log（完整历史），API 仅在失败时兜底
 - **实时更新** - 自动更新 README 中的统计数字和时间戳
+- **代码贡献** - 通过 Vercel 动态卡片实时渲染（additions/deletions/net），无需脚本统计
 
 ### 🍴 Fork 友好设计
 - **自动检测** - 智能识别 Fork 仓库，分析上游仓库而不是 Fork 本身
@@ -244,8 +231,8 @@ env:
 
 ### 智能跳过
 
-- 更新 README 前会先从现有 README 提取当前统计数字
-- 如果 additions、deletions、images 三个数字都未变化，跳过 README 更新
+- 更新 README 前会先从现有 README 提取当前图片统计数字
+- 如果 images 数字未变化，跳过 README 更新
 - 避免仅因时间戳变化而产生无意义的提交
 
 ### 数据源策略
@@ -253,6 +240,18 @@ env:
 - **本地 git log（优先）** - 完整历史数据，准确可靠
 - **GitHub API（兜底）** - 仅在 git log 失败时使用（有分页限制，最多 1000 条）
 - **无合并逻辑** - 两个数据源只取其一，git log 优先，API 仅作回退方案
+
+### Vercel 动态贡献卡片
+
+代码贡献统计（additions/deletions/net）通过独立的 Vercel Serverless Function 实时渲染为 SVG 卡片：
+
+- **端点** - `/api/contributions?username=xxx`
+- **数据源** - GitHub Stats/Contributors API 汇总用户所有仓库的贡献数据
+- **展示** - 水平三列布局（Additions / Deletions / Net）
+- **标题** - 自动从 GitHub API 获取 display name
+- **自定义** - 支持 `title_color`、`text_color`、`bg_color`、`hide_border` 等参数
+- **缓存** - 通过 `cache_seconds` 参数控制（默认 86400 秒）
+- **部署** - 需要在 Vercel 项目中配置 `PAT_1` 环境变量（GitHub PAT）
 
 ### 缓存机制
 
@@ -282,7 +281,6 @@ env:
 
 1. **定时任务** - 只有 GitHub Actions 作为作者
 2. **手动触发** - GitHub Actions + 触发者（使用隐私邮箱）
-3. **Push 事件** - 只有 GitHub Actions 作为作者
 
 ---
 
