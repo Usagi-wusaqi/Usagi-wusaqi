@@ -3,7 +3,7 @@
 // Usage: /api/contributions?username=xxx&hide_border=true&cache_seconds=86400
 
 const GITHUB_API = "https://api.github.com";
-const MAX_RETRIES = 1;
+const MAX_RETRIES = 15;
 const RETRY_DELAY = 1000;
 const BATCH_SIZE = 10;
 
@@ -79,6 +79,18 @@ async function fetchDisplayName(username, token) {
   return user.name || user.login;
 }
 
+async function fetchImageStats(username) {
+  try {
+    const url = `https://raw.githubusercontent.com/${username}/${username}/main/stats.json`;
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const data = await response.json();
+    return typeof data.total_images === "number" ? data.total_images : null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchContributions(owner, repoName, username, token) {
   const url = `${GITHUB_API}/repos/${owner}/${repoName}/stats/contributors`;
 
@@ -143,6 +155,7 @@ function renderContributionsCard(
     border_color = "#e4e2e2",
     hide_border = false,
     hide_title = false,
+    total_images = null,
   } = options;
 
   const net = additions - deletions;
@@ -150,18 +163,25 @@ function renderContributionsCard(
   const addColor = "#28a745";
   const delColor = "#d73a49";
   const netColor = net >= 0 ? addColor : delColor;
+  const imgColor = "#6f42c1";
 
   const defaultTitle = `${escapeHtml(displayName)}'${/s$/i.test(displayName.trim()) ? "" : "s"} Code Contributions`;
   const titleText = custom_title ? escapeHtml(custom_title) : defaultTitle;
 
-  // Match github-readme-stats card spacing
-  const width = 467;
-  const titleY = 35;          // same as Stats card title position
-  const bodyY = 55;           // same as Stats card body start
-  const statsRowHeight = 28;
-  const bottomPadding = 12;
-  const contentStartY = hide_title ? titleY : bodyY;
-  const height = contentStartY + statsRowHeight + bottomPadding;
+  // 4-column layout: Additions, Deletions, Net, Images
+  // ViewBox 1200×200 matches Activity Graph ratio (6:1) for equal rendered height
+  // Labels ~20px referencing Activity Graph title size in same 1200-wide canvas
+  const width = 1200;
+  const height = 200;
+  const padding = 67;
+
+  // Even gap distribution: top → title → data block → bottom
+  // Title 48px (visual ~34px), values 36px (visual ~25px), labels 20px (visual ~14px)
+  // Data block: 14 + gap + 25 ≈ 47px
+  // 3 gaps = (200 - 34 - 47) / 3 ≈ 40px
+  const titleY = hide_title ? 0 : 70;
+  const statsY = hide_title ? 80 : 120; // label baseline
+  const valueGap = 36; // label → value baseline
 
   const borderAttr = hide_border
     ? ""
@@ -169,32 +189,40 @@ function renderContributionsCard(
 
   const titleSvg = hide_title
     ? ""
-    : `<text x="25" y="${titleY}" class="header">${titleText}</text>`;
+    : `<text x="${padding}" y="${titleY}" class="header">${titleText}</text>`;
 
-  const statsY = contentStartY + 12;
-  const colWidth = Math.floor((width - 50) / 3);
+  // 4 equal zones: [padding → padding+col, ... , padding+3*col → width]
+  // Col1 left edge aligns with title left edge
+  const colWidth = Math.floor((width - padding) / 4);
+
+  const imagesValue =
+    total_images != null ? formatNumber(total_images) : "\u2014";
 
   return `
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" fill="none" role="img">
   <style>
-    .header { font: 600 18px 'Segoe UI', Ubuntu, Sans-Serif; fill: ${title_color}; }
-    @supports(-moz-appearance: auto) { .header { font-size: 15.5px; } }
-    .label { font: 400 12px 'Segoe UI', Ubuntu, Sans-Serif; fill: ${text_color}; }
-    .value { font: 700 16px 'Segoe UI', Ubuntu, Sans-Serif; }
+    .header { font: 600 48px 'Segoe UI', Ubuntu, Sans-Serif; fill: ${title_color}; }
+    @supports(-moz-appearance: auto) { .header { font-size: 41px; } }
+    .stat { font: 600 20px 'Segoe UI', Ubuntu, "Helvetica Neue", Sans-Serif; fill: ${text_color}; }
+    .bold { font: 700 36px 'Segoe UI', Ubuntu, "Helvetica Neue", Sans-Serif; }
   </style>
   <rect x="0.5" y="0.5" width="${width - 1}" height="${height - 1}" rx="4.5" fill="${bg_color}" ${borderAttr}/>
   ${titleSvg}
-  <g transform="translate(25, ${statsY})">
-    <text x="0" y="0" class="label">Additions</text>
-    <text x="0" y="18" class="value" fill="${addColor}">+${formatNumber(additions)}</text>
+  <g transform="translate(${padding}, ${statsY})">
+    <text x="0" y="0" class="stat">Additions</text>
+    <text x="0" y="${valueGap}" class="stat bold" style="fill:${addColor}">+${formatNumber(additions)}</text>
   </g>
-  <g transform="translate(${25 + colWidth}, ${statsY})">
-    <text x="0" y="0" class="label">Deletions</text>
-    <text x="0" y="18" class="value" fill="${delColor}">-${formatNumber(deletions)}</text>
+  <g transform="translate(${padding + colWidth}, ${statsY})">
+    <text x="0" y="0" class="stat">Deletions</text>
+    <text x="0" y="${valueGap}" class="stat bold" style="fill:${delColor}">-${formatNumber(deletions)}</text>
   </g>
-  <g transform="translate(${25 + colWidth * 2}, ${statsY})">
-    <text x="0" y="0" class="label">Net</text>
-    <text x="0" y="18" class="value" fill="${netColor}">${netSign}${formatNumber(net)}</text>
+  <g transform="translate(${padding + colWidth * 2}, ${statsY})">
+    <text x="0" y="0" class="stat">Net</text>
+    <text x="0" y="${valueGap}" class="stat bold" style="fill:${netColor}">${netSign}${formatNumber(net)}</text>
+  </g>
+  <g transform="translate(${padding + colWidth * 3}, ${statsY})">
+    <text x="0" y="0" class="stat">Images</text>
+    <text x="0" y="${valueGap}" class="stat bold" style="fill:${imgColor}">${imagesValue}</text>
   </g>
 </svg>`.trim();
 }
@@ -273,7 +301,10 @@ export default async (req, res) => {
       }
     }
 
-    const displayName = await fetchDisplayName(username, token);
+    const [displayName, totalImages] = await Promise.all([
+      fetchDisplayName(username, token),
+      fetchImageStats(username),
+    ]);
 
     const svg = renderContributionsCard(
       totalAdditions,
@@ -287,10 +318,11 @@ export default async (req, res) => {
         border_color: sanitizeColor(border_color, "#e4e2e2"),
         hide_border: hide_border === "true",
         hide_title: hide_title === "true",
+        total_images: totalImages,
       },
     );
 
-    const cacheMax = Math.max(parseInt(cache_seconds, 10) || 86400, 7200);
+    const cacheMax = Math.max(parseInt(cache_seconds, 10) || 86400, 60);
     res.setHeader(
       "Cache-Control",
       `max-age=${Math.floor(cacheMax / 2)}, s-maxage=${cacheMax}, stale-while-revalidate=86400`,

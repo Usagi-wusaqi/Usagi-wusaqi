@@ -161,7 +161,7 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
           # 添加更改
-          git add README.md scripts/stats_cache/
+          git add README.md stats.json scripts/stats_cache/
 
           # 创建提交
           if [ -n "${{ steps.determine-users.outputs.co_authors }}" ]; then
