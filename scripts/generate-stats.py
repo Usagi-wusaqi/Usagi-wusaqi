@@ -55,7 +55,7 @@ CommitDetailData = dict[str, AuthorData]
 CommitData = dict[str, str | int | FileData | CommitDetailData | list[FileData]]
 CacheData = dict[str, list[CommitData]]
 RepoInfo = dict[str, str | bool | dict[str, str] | None]
-StatsData = dict[str, int]
+StatsData = dict[str, int | str]
 
 
 @dataclass
@@ -280,14 +280,22 @@ def is_image_file(filename: str) -> bool:
 
 
 def print_stats_summary(
+    additions: int,
+    deletions: int,
     images: int,
     *,
     include_images: bool = True,
     prefix: str = "",
 ) -> None:
     """打印统计摘要"""
+    net = additions - deletions
+    net_sign = "+" if net >= 0 else ""
+    print_color(
+        f"{prefix}✅ +{additions:,} / -{deletions:,} (net {net_sign}{net:,})",
+        Colors.GREEN,
+    )
     if include_images:
-        print_color(f"{prefix}✅ 图片贡献: {images} images", Colors.GREEN)
+        print_color(f"{prefix}   🖼️ 图片: {images} images", Colors.GREEN)
 
 
 def run_command(cmd: str | list[str], cwd: str | None = None) -> tuple[str, int]:
@@ -366,18 +374,28 @@ def update_variable_definition(content: str, var_name: str, var_value: str) -> s
     return content
 
 
+def _parse_iso_timestamp(ts: str) -> datetime:
+    """ISO 8601 时间戳解析为时区感知 datetime，解析失败返回 epoch"""
+    try:
+        return datetime.fromisoformat(ts)
+    except (ValueError, TypeError):
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
 def get_current_time() -> str:
     """获取当前时间字符串"""
     china_tz = timezone(timedelta(hours=8))
     return datetime.now(china_tz).strftime(TIME_FORMAT)
 
 
-def calculate_cache_statistics(cache_data: CacheData) -> tuple[int, int]:
+def calculate_cache_statistics(cache_data: CacheData) -> tuple[int, int, int, int]:
     """计算缓存数据的统计信息
 
-    返回: (total_commits, total_images)
+    返回: (total_commits, total_additions, total_deletions, total_images)
     """
     total_commits = 0
+    total_additions = 0
+    total_deletions = 0
     total_images = 0
 
     for commits in cache_data.values():
@@ -385,10 +403,14 @@ def calculate_cache_statistics(cache_data: CacheData) -> tuple[int, int]:
         total_commits += len(commits_list)
         for commit in commits_list:
             commit_dict = cast("dict[str, str | int]", commit)
-            images = commit_dict.get("images", 0)
-            total_images += images if isinstance(images, int) else 0
+            a = commit_dict.get("additions", 0)
+            d = commit_dict.get("deletions", 0)
+            img = commit_dict.get("images", 0)
+            total_additions += a if isinstance(a, int) else 0
+            total_deletions += d if isinstance(d, int) else 0
+            total_images += img if isinstance(img, int) else 0
 
-    return total_commits, total_images
+    return total_commits, total_additions, total_deletions, total_images
 
 
 def sort_and_reindex_commits(cache_data: CacheData) -> CacheData:
@@ -396,10 +418,10 @@ def sort_and_reindex_commits(cache_data: CacheData) -> CacheData:
     sorted_cache_data: CacheData = {}
 
     for repo_name, commits in cache_data.items():
-        # 按 timestamp 从旧到新排序（老的在前，新的在后）
+        # 按 timestamp 从旧到新排序（ISO 8601 时区感知比较）
         sorted_commits: list[CommitData] = sorted(
             commits,
-            key=lambda x: str(x.get("timestamp", "")),
+            key=lambda x: _parse_iso_timestamp(str(x.get("timestamp", ""))),
         )
 
         # 重新编号 index（从 1 开始），使用浅拷贝避免修改原始数据
@@ -437,7 +459,7 @@ def load_cache(repo_name: str) -> CacheData:
         return {}
 
 
-def _serialize_cache(data: dict[str, dict[str, int] | CacheData]) -> str:
+def _serialize_cache(data: dict[str, dict[str, int | str] | CacheData]) -> str:
     """将缓存数据序列化为紧凑 JSON 格式
 
     格式：metadata 和 data 键使用 2 空格缩进，
@@ -447,13 +469,15 @@ def _serialize_cache(data: dict[str, dict[str, int] | CacheData]) -> str:
 
     metadata = json.dumps(data["_metadata"], ensure_ascii=False)
     lines.append(f'  "_metadata": {metadata},')
-    lines.append('  "data": {')
 
     repo_data = cast(CacheData, data["data"])
     repo_names = list(repo_data.keys())
     for ri, repo_name in enumerate(repo_names):
         commits = repo_data[repo_name]
-        lines.append(f'    "{repo_name}": [')
+        if ri == 0:
+            lines.append(f'  "data": {{"{repo_name}": [')
+        else:
+            lines.append(f'    "{repo_name}": [')
         for ci, commit in enumerate(commits):
             entry = json.dumps(commit, ensure_ascii=False)
             comma = "," if ci < len(commits) - 1 else ""
@@ -461,7 +485,10 @@ def _serialize_cache(data: dict[str, dict[str, int] | CacheData]) -> str:
         bracket_comma = "," if ri < len(repo_names) - 1 else ""
         lines.append(f"    ]{bracket_comma}")
 
-    lines.append("  }")
+    if not repo_names:
+        lines.append('  "data": {}')
+    else:
+        lines.append("  }")
     lines.append("}")
     return "\n".join(lines) + "\n"
 
@@ -482,10 +509,13 @@ def save_cache(repo_name: str, cache_data: CacheData) -> bool:
     JSON 输出格式：
     {
       "_metadata": {
-        "total_commits": int,    // 总 commit 数
-        "total_images": int      // 总图片数
+        "total_commits": int,               // 总 commit 数
+        "total_additions": int,             // 总新增行数
+        "total_deletions": int,             // 总删除行数
+        "total_images": int,                // 总图片数
+        "latest_commit_timestamp": str      // 最新 commit 的时间戳
       },
-      "data": { ... }            // commit 数据
+      "data": { ... }                       // commit 数据
     }
     """
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -496,13 +526,30 @@ def save_cache(repo_name: str, cache_data: CacheData) -> bool:
         sorted_cache_data = sort_and_reindex_commits(cache_data)
 
         # 计算统计信息
-        total_commits, total_images = calculate_cache_statistics(sorted_cache_data)
+        total_commits, total_additions, total_deletions, total_images = (
+            calculate_cache_statistics(sorted_cache_data)
+        )
 
-        cache_data_with_metadata: dict[str, dict[str, int] | CacheData] = {
-            "_metadata": {
-                "total_commits": total_commits,
-                "total_images": total_images,
-            },
+        # 取最新 commit 的时间戳（时区感知比较，排序后不一定是最后一条）
+        latest_dt = datetime.min.replace(tzinfo=timezone.utc)
+        latest_ts = ""
+        for commits in sorted_cache_data.values():
+            for c in commits:
+                ts = str(c.get("timestamp", ""))
+                dt = _parse_iso_timestamp(ts)
+                if dt > latest_dt:
+                    latest_dt = dt
+                    latest_ts = ts
+
+        metadata: dict[str, int | str] = {
+            "total_commits": total_commits,
+            "total_additions": total_additions,
+            "total_deletions": total_deletions,
+            "total_images": total_images,
+            "latest_commit_timestamp": latest_ts,
+        }
+        cache_data_with_metadata: dict[str, dict[str, int | str] | CacheData] = {
+            "_metadata": metadata,
             "data": sorted_cache_data,
         }
 
@@ -512,12 +559,71 @@ def save_cache(repo_name: str, cache_data: CacheData) -> bool:
 
         print_color(f"✅ 缓存已保存: {cache_file}", Colors.GREEN)
         print_color(f"   commits: {total_commits}", Colors.NC)
-        print_color(f"   images: {total_images}", Colors.NC)
+        print_color(
+            f"   additions: {total_additions}  deletions: {total_deletions}  images: {total_images}",
+            Colors.NC,
+        )
     except (OSError, TypeError, ValueError) as e:
         print_color(f"❌ 保存缓存失败: {e}", Colors.RED)
         return False
     else:
         return True
+
+
+def aggregate_stats_from_cache() -> StatsData:
+    """从所有缓存文件的 _metadata 汇总统计数据
+
+    遍历 CACHE_DIR 下每个仓库的 JSON 缓存文件，
+    读取各自 _metadata 中的 total_additions / total_deletions / total_images /
+    latest_commit_timestamp，累加数值并取最大时间戳后返回全局统计。
+    """
+    total_additions = 0
+    total_deletions = 0
+    total_images = 0
+    latest_dt = datetime.min.replace(tzinfo=timezone.utc)
+    latest_ts = ""
+
+    if not CACHE_DIR.exists():
+        return {
+            "total_additions": 0,
+            "total_deletions": 0,
+            "total_images": 0,
+            "latest_commit_timestamp": "",
+        }
+
+    latest_dt = datetime.min.replace(tzinfo=timezone.utc)
+    latest_ts = ""
+
+    for cache_file in sorted(CACHE_DIR.glob("*.json")):
+        if cache_file.name == "author_identities.json":
+            continue
+        try:
+            with cache_file.open(encoding="utf-8") as f:
+                data = json.load(f)
+            metadata = data.get("_metadata", {})
+            if not isinstance(metadata, dict):
+                continue
+            meta: dict[str, int | str] = cast("dict[str, int | str]", metadata)
+            a = meta.get("total_additions", 0)
+            d = meta.get("total_deletions", 0)
+            i = meta.get("total_images", 0)
+            total_additions += a if isinstance(a, int) else 0
+            total_deletions += d if isinstance(d, int) else 0
+            total_images += i if isinstance(i, int) else 0
+            ts = str(meta.get("latest_commit_timestamp", ""))
+            dt = _parse_iso_timestamp(ts)
+            if dt > latest_dt:
+                latest_dt = dt
+                latest_ts = ts
+        except (OSError, json.JSONDecodeError):
+            continue
+
+    return {
+        "total_additions": total_additions,
+        "total_deletions": total_deletions,
+        "total_images": total_images,
+        "latest_commit_timestamp": latest_ts,
+    }
 
 
 def extract_sha_from_cache_item(item: CommitData) -> str:
@@ -998,36 +1104,53 @@ def _get_commit_details_from_git(
     repo_path: str,
     sha: str,
 ) -> CommitData:
-    """从本地 git 获取 commit 详情"""
-    commit_data: CommitData = {}
+    """从本地 git 获取 commit 详情（文件状态 + 增删行数）
 
-    # 获取文件状态（仅用于图片统计）
-    git_cmd = ["git", "show", "--name-status", "--pretty=", sha]
-    status_output, returncode = run_command(git_cmd, cwd=repo_path)
+    注意：--name-status 和 --shortstat 是互斥的 diff 输出格式，
+    合并使用时后者会被忽略。因此拆成两条 git 命令分别获取。
+    """
+    commit_data: CommitData = {"files": [], "stats": {"additions": 0, "deletions": 0}}
 
-    if returncode != 0:
-        return commit_data
+    # 命令 1：--shortstat 获取增删行数汇总
+    output, rc = run_command(
+        ["git", "show", "--shortstat", "--pretty=format:", sha], cwd=repo_path
+    )
+    if rc == 0:
+        for line in output.split("\n"):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            # "3 files changed, 10 insertions(+), 5 deletions(-)"
+            if "changed" in stripped and (
+                "insertion" in stripped or "deletion" in stripped
+            ):
+                ins_match = re.search(r"(\d+) insertion", stripped)
+                del_match = re.search(r"(\d+) deletion", stripped)
+                stat_dict = cast("dict[str, int]", commit_data.get("stats", {}))
+                if ins_match:
+                    stat_dict["additions"] = int(ins_match.group(1))
+                if del_match:
+                    stat_dict["deletions"] = int(del_match.group(1))
+                break
 
-    commit_data["files"] = []
-
-    for line in status_output.split("\n"):
-        if line.strip():
+    # 命令 2：--name-status 获取文件状态（用于图片计数）
+    output, rc = run_command(
+        ["git", "show", "--name-status", "--pretty=format:", sha], cwd=repo_path
+    )
+    if rc == 0:
+        for line in output.split("\n"):
             parts = line.split("\t")
             if len(parts) >= MIN_STATUS_PARTS:
                 status_code = parts[0].rstrip("0123456789")  # R100->R, C100->C
                 if status_code in ("R", "C") and len(parts) >= 3:
-                    # Rename/Copy: 取新文件名 (parts[2])
                     filename = parts[2]
                     status = "added" if status_code == "C" else "modified"
                 else:
                     filename = parts[1]
                     status = "added" if parts[0] == "A" else "modified"
-                commit_data["files"].append(
-                    {
-                        "filename": filename,
-                        "status": status,
-                    }
-                )
+                files = commit_data.get("files", [])
+                if isinstance(files, list):
+                    files.append({"filename": filename, "status": status})
 
     return commit_data
 
@@ -1048,25 +1171,33 @@ def _calculate_commit_stats(
     commit_data: CommitData,
     *,
     include_images: bool,
-) -> int:
-    """计算单个 commit 的图片统计
+) -> tuple[int, int, int]:
+    """计算单个 commit 的统计数据
 
-    返回: images 数量
+    返回: (additions, deletions, images)
     """
+    # 提取增删行数（git --shortstat 或 API stats 字段）
+    stats = commit_data.get("stats", {})
+    additions = 0
+    deletions = 0
+    if isinstance(stats, dict):
+        a = stats.get("additions", 0)
+        d = stats.get("deletions", 0)
+        additions = a if isinstance(a, int) else 0
+        deletions = d if isinstance(d, int) else 0
+
+    # 统计图片（仅 status=added 的图片文件）
     images = 0
+    if include_images:
+        files_list = commit_data.get("files", [])
+        if isinstance(files_list, list):
+            for file in files_list:
+                if file.get("status") == "added":
+                    filename = file.get("filename", "")
+                    if isinstance(filename, str) and is_image_file(filename):
+                        images += 1
 
-    if not include_images:
-        return 0
-
-    files_list = commit_data.get("files", [])
-    if isinstance(files_list, list):
-        for file in files_list:
-            if file.get("status") == "added":
-                filename = file.get("filename", "")
-                if isinstance(filename, str) and is_image_file(filename):
-                    images += 1
-
-    return images
+    return additions, deletions, images
 
 
 def _get_commit_timestamp(commit: CommitData) -> str:
@@ -1085,15 +1216,15 @@ def analyze_commits(
     ctx: RepoContext,
     *,
     include_images: bool = True,
-) -> int:
-    """分析图片贡献
+) -> None:
+    """分析代码贡献并保存缓存
 
     数据获取策略：
     - Fork 仓库：直接克隆上游仓库，从 origin 获取 Git log（完整历史）
     - 非 Fork 仓库：克隆自己的仓库，从 origin 获取 Git log（完整历史）
     - API 仅在 git log 失败时兜底（有分页限制）
 
-    返回: total_images
+    结果写入缓存文件，由 aggregate_stats_from_cache() 汇总。
     """
     print_color("    📊 开始分析commits...", Colors.YELLOW)
 
@@ -1116,12 +1247,12 @@ def analyze_commits(
 
     if not all_commits:
         print_color("    ℹ️  未找到commits", Colors.NC)
-        return 0
+        return
 
     total_commits = len(all_commits)
     print_color(f"    📊 最终使用 {total_commits} 个commits", Colors.NC)
 
-    # 清理过期缓存
+    # 清理过期缓存（消失的 SHA 删除）
     cache_data = clean_stale_cache(
         cache_data,
         all_commits,
@@ -1129,26 +1260,28 @@ def analyze_commits(
         is_api_fallback=is_api_fallback,
     )
 
-    # 处理所有 commits
-    total_images, cache_hits, cache_misses = _process_all_commits(
-        all_commits=all_commits,
-        cache_data=cache_data,
-        ctx=ctx,
-        include_images=include_images,
+    # 处理所有 commits（不变的跳过，新的/旧格式的重新获取）
+    total_additions, total_deletions, total_images, cache_hits, cache_misses = (
+        _process_all_commits(
+            all_commits=all_commits,
+            cache_data=cache_data,
+            ctx=ctx,
+            include_images=include_images,
+        )
     )
 
     # 显示统计信息
     _print_cache_stats(cache_hits, cache_misses, total_commits)
     print_stats_summary(
+        total_additions,
+        total_deletions,
         total_images,
         include_images=include_images,
         prefix="    ",
     )
 
-    # 保存缓存
+    # 保存缓存（累加写入文件头 _metadata）
     save_cache(ctx.repo_name, cache_data)
-
-    return total_images
 
 
 def _process_all_commits(
@@ -1157,18 +1290,20 @@ def _process_all_commits(
     cache_data: CacheData,
     ctx: RepoContext,
     include_images: bool,
-) -> tuple[int, int, int]:
+) -> tuple[int, int, int, int, int]:
     """处理所有 commits 并统计
 
-    返回: (total_images, cache_hits, cache_misses)
+    返回: (total_additions, total_deletions, total_images, cache_hits, cache_misses)
     """
+    total_additions = 0
+    total_deletions = 0
     total_images = 0
     cache_hits = 0
     cache_misses = 0
     processed = 0
     total_commits = len(all_commits)
 
-    # 构建缓存索引 O(1) 查找，替代 _find_cached_commit 的 O(n) 扫描
+    # 构建缓存索引 O(1) 查找
     cache_index: dict[str, CommitData] = {}
     for item in cache_data.get(ctx.repo_name, []):
         url = item.get("url")
@@ -1188,14 +1323,17 @@ def _process_all_commits(
             )
 
         commit_url = f"https://github.com/{ctx.owner}/{ctx.repo_name}/commit/{sha}"
-        cached_data = cache_index.get(commit_url)
+        cached_entry = cache_index.get(commit_url)
 
-        if cached_data:
-            # 使用缓存数据（--no-images 模式下跳过累加）
+        # 缓存命中：旧格式（无 additions 字段）视为未命中
+        if cached_entry and "additions" in cached_entry:
+            a = cached_entry.get("additions", 0)
+            d = cached_entry.get("deletions", 0)
+            total_additions += a if isinstance(a, int) else 0
+            total_deletions += d if isinstance(d, int) else 0
             if include_images:
-                images = cached_data.get("images", 0)
-                if isinstance(images, int):
-                    total_images += images
+                img = cached_entry.get("images", 0)
+                total_images += img if isinstance(img, int) else 0
             cache_hits += 1
             continue
 
@@ -1206,8 +1344,12 @@ def _process_all_commits(
         else:
             commit_data = _get_commit_details_from_api(ctx.owner, ctx.repo_name, sha)
 
-        # 计算图片统计
-        images = _calculate_commit_stats(commit_data, include_images=include_images)
+        # 计算统计
+        additions, deletions, images = _calculate_commit_stats(
+            commit_data, include_images=include_images
+        )
+        total_additions += additions
+        total_deletions += deletions
         total_images += images
 
         # 更新缓存（--no-images 模式下不写入缓存，避免污染）
@@ -1215,16 +1357,25 @@ def _process_all_commits(
             continue
         if ctx.repo_name not in cache_data:
             cache_data[ctx.repo_name] = []
+
+        # 移除旧格式缓存条目（如果存在）
+        if cached_entry:
+            cache_data[ctx.repo_name] = [
+                c for c in cache_data[ctx.repo_name] if c.get("url") != commit_url
+            ]
+
         cache_data[ctx.repo_name].append(
             {
                 "index": processed,
+                "additions": additions,
+                "deletions": deletions,
                 "images": images,
                 "timestamp": _get_commit_timestamp(commit),
                 "url": commit_url,
             }
         )
 
-    return total_images, cache_hits, cache_misses
+    return total_additions, total_deletions, total_images, cache_hits, cache_misses
 
 
 def _print_cache_stats(cache_hits: int, cache_misses: int, total_commits: int) -> None:
@@ -1242,8 +1393,11 @@ def _print_cache_stats(cache_hits: int, cache_misses: int, total_commits: int) -
 # ============================================================================
 
 
-def process_repos(repos: list[RepoInfo], *, include_images: bool = True) -> StatsData:
-    """处理所有仓库
+def process_repos(repos: list[RepoInfo], *, include_images: bool = True) -> None:
+    """处理所有仓库：克隆 → 分析 → 保存缓存
+
+    最终统计由 aggregate_stats_from_cache() 从缓存文件汇总，
+    本函数仅负责处理和保存每个仓库的缓存。
 
     Args:
         repos: 仓库列表
@@ -1251,7 +1405,6 @@ def process_repos(repos: list[RepoInfo], *, include_images: bool = True) -> Stat
     """
     print_separator("开始处理仓库...")
 
-    total_images = 0
     temp_dir = Path.cwd() / "temp_repos"
     temp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1273,7 +1426,6 @@ def process_repos(repos: list[RepoInfo], *, include_images: bool = True) -> Stat
             # 确定要克隆的仓库（Fork 仓库直接克隆上游）
             upstream_owner, upstream_name = get_upstream_repo(repo)
             if upstream_owner and upstream_name:
-                # Fork 仓库：直接克隆上游仓库
                 clone_owner = upstream_owner
                 clone_repo_name = upstream_name
                 target_repo_name = upstream_name
@@ -1285,7 +1437,6 @@ def process_repos(repos: list[RepoInfo], *, include_images: bool = True) -> Stat
                     Colors.NC,
                 )
             else:
-                # 非 Fork 仓库：克隆自己的仓库
                 clone_owner = ORIGIN_USERNAME
                 clone_repo_name = str(repo_name)
                 target_repo_name = str(repo_name)
@@ -1294,11 +1445,10 @@ def process_repos(repos: list[RepoInfo], *, include_images: bool = True) -> Stat
                     f"https://{TOKEN}@github.com/",
                 )
 
-            # 克隆仓库到临时目录（使用上游仓库名作为目录名）
+            # 克隆仓库到临时目录
             repo_path = temp_dir / clone_repo_name
             if repo_path.exists():
                 print_color("  🔄 更新本地仓库...", Colors.YELLOW)
-                # 先尝试 unshallow（如果之前是浅克隆），然后 fetch
                 _, rc = run_command(
                     "git fetch --unshallow origin",
                     cwd=str(repo_path),
@@ -1307,7 +1457,6 @@ def process_repos(repos: list[RepoInfo], *, include_images: bool = True) -> Stat
                     run_command("git fetch origin", cwd=str(repo_path))
             else:
                 print_color("  📥 克隆仓库...", Colors.YELLOW)
-                # 使用 --no-single-branch 确保获取所有分支引用
                 _, returncode = run_command(
                     f"git clone --no-single-branch {clone_url}",
                     cwd=str(temp_dir),
@@ -1316,7 +1465,6 @@ def process_repos(repos: list[RepoInfo], *, include_images: bool = True) -> Stat
                     print_color("  ⚠️  克隆仓库失败，跳过", Colors.YELLOW)
                     continue
 
-            # 构建仓库上下文（简化：不再需要 upstream 信息，因为直接克隆的就是主仓库）
             ctx = RepoContext(
                 repo_path=str(repo_path),
                 owner=clone_owner,
@@ -1324,37 +1472,15 @@ def process_repos(repos: list[RepoInfo], *, include_images: bool = True) -> Stat
                 username=ORIGIN_USERNAME,
             )
 
-            # 分析图片贡献
-            repo_images = analyze_commits(ctx, include_images=include_images)
-
-            total_images += repo_images
-
-            # 显示结果
-            if repo_images == 0:
-                print_color("  ⚠️  用户没有图片贡献", Colors.YELLOW)
-            else:
-                print_stats_summary(
-                    repo_images,
-                    include_images=include_images,
-                    prefix="  ",
-                )
+            # 分析代码贡献（结果写入缓存文件）
+            analyze_commits(ctx, include_images=include_images)
     finally:
-        # 清理临时目录（确保异常时也能清理）
         print_color("\n  🧹 清理临时文件...", Colors.YELLOW)
         if temp_dir.exists():
             try:
                 shutil.rmtree(temp_dir)
             except OSError as e:
                 print_color(f"  ⚠️  清理临时目录失败: {e}", Colors.YELLOW)
-
-    print_separator("📈 汇总统计")
-    if include_images:
-        print_color(f"  🖼️ 总 images: {total_images} images", Colors.GREEN)
-    print_separator()
-
-    return {
-        "total_images": total_images,
-    }
 
 
 # ============================================================================
@@ -1398,15 +1524,26 @@ def update_usernames_in_readme(content: str) -> str:
     return content
 
 
-def generate_readme_from_template(template_path: Path) -> str:
+def generate_readme_from_template(template_path: Path, *, mode: str = "actions") -> str:
     """从模板生成 README 内容"""
     with template_path.open(encoding="utf-8") as f:
         content = f.read()
+
+    # 根据模式选择贡献卡片来源
+    if mode == "actions":
+        card_src = "contributions.svg"
+    else:
+        card_src = (
+            f"https://usagi-wusaqi.vercel.app/api/contributions"
+            f"?username={ORIGIN_USERNAME}"
+            f"&hide_border=true&custom_title=Code%20Contributions&cache_seconds=86400"
+        )
 
     # 准备替换数据
     replacements = {
         "ORIGIN_USERNAME": ORIGIN_USERNAME,
         "UPSTREAM_USERNAME": UPSTREAM_USERNAME,
+        "CONTRIBUTIONS_CARD_SRC": card_src,
     }
 
     # 替换所有占位符
@@ -1435,24 +1572,47 @@ def save_readme_content(content: str) -> bool:
 
 def print_update_summary(stats: StatsData) -> None:
     """打印更新结果摘要"""
-    current_time = get_current_time()
+    add = int(stats.get("total_additions", 0))
+    dele = int(stats.get("total_deletions", 0))
+    imgs = int(stats.get("total_images", 0))
+    latest_ts = stats.get("latest_commit_timestamp", "")
+    net = add - dele
+    net_sign = "+" if net >= 0 else ""
     print_color("✅ README.md 更新成功！", Colors.GREEN)
-    print_color(f"   🖼️ 图片数量: {stats.get('total_images', 0)}", Colors.NC)
-    print_color(f"   🕒 更新时间: {current_time}", Colors.NC)
+    print_color(f"   ✍️  +{add:,} / -{dele:,} (net {net_sign}{net:,})", Colors.NC)
+    print_color(f"   🖼️  图片数量: {imgs:,}", Colors.NC)
+    print_color(f"   🕒 最新 commit: {latest_ts}", Colors.NC)
     print_color(f"   👤 远端用户名: {ORIGIN_USERNAME}", Colors.NC)
     print_color(f"   👑 上游用户名: {UPSTREAM_USERNAME}", Colors.NC)
 
 
 def save_stats_json(stats: StatsData) -> None:
-    """输出 stats.json 供 Vercel Serverless Function 读取"""
-    data: dict[str, int | str] = {
-        "total_images": stats.get("total_images", 0),
-        "last_updated": get_current_time(),
-    }
+    """输出 stats.json 供 Vercel Serverless Function 读取
+
+    last_updated 使用最新 commit 的时间戳（而非脚本运行时间），
+    这样没有新代码时文件内容不变 → git 无 diff → 不产生空提交。
+    """
+    latest_ts = stats.get("latest_commit_timestamp", "")
+    # 统一用 ISO 8601 格式；无 commit 时回退到当前时间的 ISO 格式
+    if latest_ts:
+        last_updated = str(latest_ts)
+    else:
+        last_updated = datetime.now(tz=timezone(timedelta(hours=8))).isoformat()
+
+    comment = "generate-stats.py 自动生成。Vercel API 读取 total_images；Actions SVG 读取全部字段"
     try:
         with STATS_JSON_PATH.open("w", encoding="utf-8", newline="\n") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            f.write("\n")
+            # 第一行：_comment（静态）；第二行：数据字段（动态，git diff 只变这行）
+            f.write('{"_comment":' + json.dumps(comment, ensure_ascii=False) + ",\n")
+            rest: dict[str, int | str] = {
+                "total_additions": stats.get("total_additions", 0),
+                "total_deletions": stats.get("total_deletions", 0),
+                "total_images": stats.get("total_images", 0),
+                "last_updated": last_updated,
+            }
+            f.write(
+                json.dumps(rest, ensure_ascii=False, separators=(",", ":"))[1:] + "\n"
+            )
         print_color(f"✅ stats.json 已更新: {STATS_JSON_PATH}", Colors.GREEN)
     except OSError as e:
         print_color(f"⚠️  保存 stats.json 失败: {e}", Colors.RED)
@@ -1461,7 +1621,7 @@ def save_stats_json(stats: StatsData) -> None:
 def _read_current_stats() -> StatsData | None:
     """从 stats.json 中读取当前的统计数字
 
-    返回: 包含 total_images 的字典，或 None
+    返回: 包含统计数据的字典，或 None
     """
     if not STATS_JSON_PATH.exists():
         return None
@@ -1471,6 +1631,8 @@ def _read_current_stats() -> StatsData | None:
             data = json.load(f)
         if "total_images" in data:
             return {
+                "total_additions": int(data.get("total_additions", 0)),
+                "total_deletions": int(data.get("total_deletions", 0)),
                 "total_images": int(data["total_images"]),
             }
     except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
@@ -1479,33 +1641,27 @@ def _read_current_stats() -> StatsData | None:
     return None
 
 
-def update_readme(stats: StatsData) -> bool:
+def update_readme(stats: StatsData, *, mode: str = "actions") -> bool:
     """更新 README.md（支持模板系统）
 
     功能：
     - 如果存在 README.template.md，从模板生成完整的 README
     - 如果不存在模板，仅更新现有 README 中的用户名
-    - 如果统计数据未变化，跳过更新避免无意义的提交
+
+    注意：变更检测已由 main() 完成，本函数无条件执行更新。
 
     参数：
-    - stats: 统计数据字典，包含 total_images
+    - stats: 统计数据字典
+    - mode: 运行模式 (actions/api)
     """
     print_color("📝 更新 README.md...", Colors.YELLOW)
-
-    # 先检查统计数据是否有变化
-    old_stats = _read_current_stats()
-    if old_stats is not None and old_stats.get("total_images") == stats.get(
-        "total_images", 0
-    ):
-        print_color("ℹ️  统计数据未变化，跳过 README 更新", Colors.YELLOW)
-        return True
 
     template_path = Path(__file__).parent.parent / "README.template.md"
 
     if template_path.exists():
         # 使用模板系统
         print_color("📄 使用模板系统生成 README", Colors.GREEN)
-        content = generate_readme_from_template(template_path)
+        content = generate_readme_from_template(template_path, mode=mode)
     else:
         # 回退：仅更新用户名
         print_color("⚠️  未发现模板文件，更新现有 README", Colors.YELLOW)
@@ -1530,6 +1686,108 @@ def update_readme(stats: StatsData) -> bool:
 
 
 # ============================================================================
+# SVG 卡片生成（Actions 模式）
+# ============================================================================
+
+SVG_CARD_PATH = Path(__file__).parent.parent / "contributions.svg"
+
+
+def _format_number(num: int) -> str:
+    """千分位格式化数字"""
+    return f"{num:,}"
+
+
+def _escape_html(text: str) -> str:
+    """HTML 转义"""
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def generate_contributions_svg(
+    stats: StatsData,
+    display_name: str,
+    *,
+    custom_title: str | None = None,
+    title_color: str = "#2f80ed",
+    text_color: str = "#434d58",
+    bg_color: str = "#fffefe",
+    border_color: str = "#e4e2e2",
+) -> str:
+    """生成贡献统计 SVG 卡片（与 Vercel 版本 renderContributionsCard 对齐）"""
+    additions = int(stats.get("total_additions", 0))
+    deletions = int(stats.get("total_deletions", 0))
+    images = int(stats.get("total_images", 0))
+    net = additions - deletions
+    net_sign = "+" if net >= 0 else ""
+    add_color = "#28a745"
+    del_color = "#d73a49"
+    net_color = add_color if net >= 0 else del_color
+    img_color = "#6f42c1"
+
+    if custom_title is not None:
+        title_text = _escape_html(custom_title)
+    else:
+        suffix = "" if _escape_html(display_name).rstrip().endswith("s") else "s"
+        title_text = f"{_escape_html(display_name)}&apos;{suffix} Code Contributions"
+
+    width = 1200
+    height = 200
+    padding = 67
+    title_y = 70
+    stats_y = 120
+    value_gap = 36
+    col_width = (width - padding) // 4
+
+    return f"""\
+<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" fill="none" role="img">
+  <style>
+    .header {{ font: 600 48px 'Segoe UI', Ubuntu, Sans-Serif; fill: {title_color}; }}
+    @supports(-moz-appearance: auto) {{ .header {{ font-size: 41px; }} }}
+    .stat {{ font: 600 20px 'Segoe UI', Ubuntu, "Helvetica Neue", Sans-Serif; fill: {text_color}; }}
+    .bold {{ font: 700 36px 'Segoe UI', Ubuntu, "Helvetica Neue", Sans-Serif; }}
+  </style>
+  <rect x="0.5" y="0.5" width="{width - 1}" height="{height - 1}" rx="4.5" fill="{bg_color}" stroke="{border_color}" stroke-width="1"/>
+  <text x="{padding}" y="{title_y}" class="header">{title_text}</text>
+  <g transform="translate({padding}, {stats_y})">
+    <text x="0" y="0" class="stat">Additions</text>
+    <text x="0" y="{value_gap}" class="stat bold" style="fill:{add_color}">+{_format_number(additions)}</text>
+  </g>
+  <g transform="translate({padding + col_width}, {stats_y})">
+    <text x="0" y="0" class="stat">Deletions</text>
+    <text x="0" y="{value_gap}" class="stat bold" style="fill:{del_color}">-{_format_number(deletions)}</text>
+  </g>
+  <g transform="translate({padding + col_width * 2}, {stats_y})">
+    <text x="0" y="0" class="stat">Net</text>
+    <text x="0" y="{value_gap}" class="stat bold" style="fill:{net_color}">{net_sign}{_format_number(net)}</text>
+  </g>
+  <g transform="translate({padding + col_width * 3}, {stats_y})">
+    <text x="0" y="0" class="stat">Images</text>
+    <text x="0" y="{value_gap}" class="stat bold" style="fill:{img_color}">{_format_number(images)}</text>
+  </g>
+</svg>"""
+
+
+def save_contributions_svg(stats: StatsData, *, custom_title: str | None = None) -> bool:
+    """生成并保存贡献统计 SVG 卡片"""
+    display_name = ORIGIN_USERNAME
+    svg_content = generate_contributions_svg(stats, display_name, custom_title=custom_title)
+    try:
+        with SVG_CARD_PATH.open("w", encoding="utf-8", newline="\n") as f:
+            f.write(svg_content)
+            f.write("\n")
+        print_color(f"✅ SVG 卡片已生成: {SVG_CARD_PATH}", Colors.GREEN)
+    except OSError as e:
+        print_color(f"❌ 保存 SVG 失败: {e}", Colors.RED)
+        return False
+    else:
+        return True
+
+
+# ============================================================================
 # 主函数
 # ============================================================================
 
@@ -1538,11 +1796,19 @@ def main() -> int:
     """主函数"""
     parser = argparse.ArgumentParser(description="生成 GitHub 统计")
     parser.add_argument("--no-images", action="store_true", help="不统计图片贡献")
+    parser.add_argument("--custom-title", default=None, help="自定义 SVG 卡片标题（默认带用户名）")
     parser.add_argument("--clear-cache", action="store_true", help="清除缓存文件")
+    parser.add_argument(
+        "--mode",
+        choices=["actions", "api"],
+        default="actions",
+        help="运行模式: actions=生成本地SVG+更新README, api=仅stats.json供Vercel读取+更新README (默认: actions)",
+    )
     args = parser.parse_args()
 
     print_separator("🚀 开始生成 GitHub 统计...")
     print_color("📊 统计配置:", Colors.YELLOW)
+    print_color(f"   - 运行模式: {args.mode}", Colors.NC)
     print_color(f"   - 图片统计: {'关闭' if args.no_images else '开启'}", Colors.NC)
     if not args.no_images:
         print_color(f"   - 缓存目录: {CACHE_DIR}", Colors.NC)
@@ -1573,19 +1839,45 @@ def main() -> int:
         print_color("⚠️  没有找到仓库", Colors.YELLOW)
         return 1
 
-    # 处理仓库
+    # 处理仓库（克隆 → 分析 → 保存缓存）
     try:
-        stats = process_repos(repos, include_images=not args.no_images)
+        process_repos(repos, include_images=not args.no_images)
     except RateLimitError as e:
         print_color(f"❌ {e}", Colors.RED)
         return 1
 
-    # 更新 README.md
-    if not update_readme(stats):
-        return 1
+    # 从所有缓存文件的 _metadata 汇总统计
+    stats = aggregate_stats_from_cache()
+    add = int(stats.get("total_additions", 0))
+    dele = int(stats.get("total_deletions", 0))
+    imgs = int(stats.get("total_images", 0))
+    net = add - dele
+    net_sign = "+" if net >= 0 else ""
+    print_separator("📈 汇总统计（来自缓存文件 _metadata）")
+    print_color(f"  ✍️  +{add:,} / -{dele:,} (net {net_sign}{net:,})", Colors.GREEN)
+    print_color(f"  🖼️  总 images: {imgs:,}", Colors.GREEN)
+    print_separator()
 
-    # 输出 stats.json 供 Vercel Serverless Function 读取
-    save_stats_json(stats)
+    # 先读旧数据做变更检测（必须在 save_stats_json 之前）
+    old_stats = _read_current_stats()
+    stats_changed = old_stats is None or any(
+        old_stats.get(k) != stats.get(k, 0)
+        for k in ("total_additions", "total_deletions", "total_images")
+    )
+
+    if not stats_changed:
+        print_color("ℹ️  统计数据未变化，跳过全部更新", Colors.YELLOW)
+    else:
+        # 写入 stats.json（last_updated = 最新 commit 时间戳）
+        save_stats_json(stats)
+
+        # Actions 模式：从 stats 数据生成本地 SVG 卡片
+        if args.mode == "actions" and not save_contributions_svg(stats, custom_title=args.custom_title):
+            return 1
+
+        # 更新 README.md
+        if not update_readme(stats, mode=args.mode):
+            return 1
 
     print_separator("✅ 脚本执行完成！")
     return 0

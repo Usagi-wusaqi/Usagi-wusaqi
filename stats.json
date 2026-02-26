@@ -1,4 +1,2 @@
-{
-  "total_images": 132,
-  "last_updated": "2026-02-22 08:29:28 UTC+8"
-}
+{"_comment":"generate-stats.py 自动生成。Vercel API 读取 total_images；Actions SVG 读取全部字段",
+"total_additions":0,"total_deletions":0,"total_images":132,"last_updated":"2026-02-22 08:29:28 UTC+8"}

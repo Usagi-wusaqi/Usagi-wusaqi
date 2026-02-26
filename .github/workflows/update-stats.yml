@@ -3,8 +3,8 @@ name: 更新 README 统计数据
 on:
   workflow_dispatch:
   schedule:
-    # 每季度首日 08:00 北京时间 (3/1, 6/1, 9/1, 12/1)
-    - cron: '0 0 1 3,6,9,12 *'
+    # 每天 23:59 北京时间 (UTC+8 → 15:59 UTC)
+    - cron: '59 15 * * *'
 
 permissions:
   contents: write
@@ -125,7 +125,7 @@ jobs:
           fi
 
           # 运行脚本，带超时和错误处理
-          timeout 25m python3 scripts/generate-stats.py || {
+          timeout 25m python3 scripts/generate-stats.py --mode actions --custom-title "Code Contributions" || {
             echo "❌ 统计生成失败或超时"
             echo "📋 检查部分结果..."
             if [ -f "README.md" ]; then
@@ -161,7 +161,7 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
           # 添加更改
-          git add README.md stats.json scripts/stats_cache/
+          git add README.md stats.json contributions.svg scripts/stats_cache/
 
           # 创建提交
           if [ -n "${{ steps.determine-users.outputs.co_authors }}" ]; then
