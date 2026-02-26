@@ -912,6 +912,27 @@ def get_upstream_repo(repo: RepoInfo) -> tuple[str | None, str | None]:
 # ============================================================================
 
 
+def _collect_commits(
+    git_log_output: str,
+    seen_shas: set[str],
+    result: list[CommitData],
+) -> None:
+    """解析 git log --format=%H%n%aI 的输出，去重后追加到 result
+
+    输出格式是交替的两行：SHA 和 ISO 日期
+    """
+    lines = [line.strip() for line in git_log_output.split("\n") if line.strip()]
+    for i in range(0, len(lines), 2):
+        if i + 1 >= len(lines):
+            break
+        sha = lines[i]
+        iso_date = lines[i + 1]
+        if sha in seen_shas:
+            continue
+        seen_shas.add(sha)
+        result.append({"sha": sha, "commit": {"author": {"date": iso_date}}})
+
+
 def get_commits_from_git_log(
     repo_path: str,
     default_branch: str,
@@ -937,38 +958,15 @@ def get_commits_from_git_log(
     all_commits: list[CommitData] = []
 
     for author in authors:
-        safe_author = author.replace('"', '\\"')
-        git_cmd = [
-            "git",
-            "log",
-            f"origin/{default_branch}",
-            f"--author={safe_author}",
-            "--format=%H%n%aI",
-        ]
-        output, returncode = run_command(git_cmd, cwd=repo_path)
-
-        if returncode != 0:
-            continue
-
-        lines = [line.strip() for line in output.split("\n") if line.strip()]
-
-        # 每两行为一对：SHA 和 ISO 时间戳
-        for i in range(0, len(lines), 2):
-            if i + 1 < len(lines):
-                sha = lines[i]
-                iso_date = lines[i + 1]
-
-                # 跳过已添加的 commit（去重）
-                if sha in all_shas:
-                    continue
-                all_shas.add(sha)
-
-                # 构建与 API 兼容的结构
-                commit_obj: CommitData = {
-                    "sha": sha,
-                    "commit": {"author": {"date": iso_date}},
-                }
-                all_commits.append(commit_obj)
+        safe = author.replace('"', '\\"')
+        # --author 匹配主作者 / --grep 匹配 Co-authored-by 标记
+        for flag in (f"--author={safe}", f"--grep=Co-authored-by: {safe}"):
+            output, rc = run_command(
+                ["git", "log", f"origin/{default_branch}", flag, "--format=%H%n%aI"],
+                cwd=repo_path,
+            )
+            if rc == 0:
+                _collect_commits(output, all_shas, all_commits)
 
     if all_commits:
         print_color(
@@ -1771,10 +1769,14 @@ def generate_contributions_svg(
 </svg>"""
 
 
-def save_contributions_svg(stats: StatsData, *, custom_title: str | None = None) -> bool:
+def save_contributions_svg(
+    stats: StatsData, *, custom_title: str | None = None
+) -> bool:
     """生成并保存贡献统计 SVG 卡片"""
     display_name = ORIGIN_USERNAME
-    svg_content = generate_contributions_svg(stats, display_name, custom_title=custom_title)
+    svg_content = generate_contributions_svg(
+        stats, display_name, custom_title=custom_title
+    )
     try:
         with SVG_CARD_PATH.open("w", encoding="utf-8", newline="\n") as f:
             f.write(svg_content)
@@ -1796,7 +1798,9 @@ def main() -> int:
     """主函数"""
     parser = argparse.ArgumentParser(description="生成 GitHub 统计")
     parser.add_argument("--no-images", action="store_true", help="不统计图片贡献")
-    parser.add_argument("--custom-title", default=None, help="自定义 SVG 卡片标题（默认带用户名）")
+    parser.add_argument(
+        "--custom-title", default=None, help="自定义 SVG 卡片标题（默认带用户名）"
+    )
     parser.add_argument("--clear-cache", action="store_true", help="清除缓存文件")
     parser.add_argument(
         "--mode",
@@ -1872,7 +1876,9 @@ def main() -> int:
         save_stats_json(stats)
 
         # Actions 模式：从 stats 数据生成本地 SVG 卡片
-        if args.mode == "actions" and not save_contributions_svg(stats, custom_title=args.custom_title):
+        if args.mode == "actions" and not save_contributions_svg(
+            stats, custom_title=args.custom_title
+        ):
             return 1
 
         # 更新 README.md
