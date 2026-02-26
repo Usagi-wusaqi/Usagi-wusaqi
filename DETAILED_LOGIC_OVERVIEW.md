@@ -42,14 +42,14 @@
 ```bash
 export GH_TOKEN="your-github-token"
 python scripts/generate-stats.py               # 默认 actions 模式：生成本地 SVG 卡片
-python scripts/generate-stats.py --mode api     # api 模式：仅生成 stats.json，SVG 由 Vercel 实时渲染
+python scripts/generate-stats.py --mode api     # api 模式：仅生成 config.toml，SVG 由 Vercel 实时渲染
 
 # 可选参数
 python scripts/generate-stats.py --no-images    # 不统计图片
 python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（不会重新生成统计）
 ```
 
-> **注意：** 脚本同时统计代码行数（additions/deletions）和图片数。`--mode actions`（默认）会生成本地 `contributions.svg` 卡片；`--mode api` 仅生成 `stats.json` 供 Vercel 卡片读取。
+> **注意：** 脚本同时统计代码行数（additions/deletions）和图片数。`--mode actions`（默认）会生成本地 `contributions.svg` 卡片；`--mode api` 仅生成 `config.toml` 供 Vercel 卡片读取。
 
 ---
 
@@ -94,7 +94,7 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（
                 ┌─────────────┴─────────────┐
                 │                           │
         actions 模式                   api 模式
-    save_contributions_svg()     (Vercel 读取 stats.json)
+    save_contributions_svg()     (Vercel 读取 config.toml)
     → contributions.svg              → 实时 SVG
                 │                           │
                 └─────────────┬─────────────┘
@@ -119,7 +119,7 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（
 }
 ```
 
-### stats.json 格式
+### config.toml 格式
 
 两行格式：第一行 `_comment`（静态），第二行数据字段（动态，git diff 只变这行）。`last_updated` 使用最新 commit 的 ISO 8601 时间戳（而非脚本运行时间），这样没有新代码时文件内容不变 → git 无 diff → 不产生提交。
 
@@ -192,7 +192,7 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（
 - **代码行数** - 统计每个 commit 的 additions 和 deletions（通过 `git show --shortstat`）
 - **图片资源** - 统计图片文件（.png, .jpg, .jpeg, .gif, .svg, .webp, .ico, .bmp）
 - **Git log 优先** - 优先使用本地 git log（完整历史），API 仅在失败时兜底
-- **分层数据流** - 缓存文件 `_metadata` → `stats.json` → SVG 卡片 / README
+- **分层数据流** - 缓存文件 `_metadata` → `config.toml` → SVG 卡片 / README
 - **SVG 卡片** - 四列布局：Additions / Deletions / Net / Images
 
 ### 🍴 Fork 友好设计
@@ -300,15 +300,15 @@ env:
 ```text
 1. 初始化 → 2. 获取仓库列表 → 3. 处理每个仓库 → 4. 汇总统计 → 5. 输出结果 → 6. 清理
    ↓              ↓                ↓               ↓              ↓            ↓
-环境变量       GitHub API     clone+分析+缓存   aggregate_     stats.json   临时文件
+环境变量       GitHub API     clone+分析+缓存   aggregate_     config.toml   临时文件
 --mode参数                                      stats_from_    SVG卡片
                                                  cache()       README.md
 ```
 
 ### 智能跳过
 
-- 更新前会先从 `stats.json` 读取当前统计数字（additions/deletions/images）
-- 如果三项统计数据均未变化，跳过全部更新（stats.json + SVG + README）
+- 更新前会先从 `config.toml` 读取当前统计数字（additions/deletions/images）
+- 如果三项统计数据均未变化，跳过全部更新（config.toml + SVG + README）
 - 避免仅因时间戳变化而产生无意义的提交
 
 ### 数据源策略
@@ -331,7 +331,7 @@ env:
 #### API 模式
 
 - **端点** - `/api/contributions?username=xxx`
-- **数据源** - GitHub Stats/Contributors API 汇总代码贡献；`stats.json`（由脚本生成）提供图片统计
+- **数据源** - GitHub Stats/Contributors API 汇总代码贡献；`config.toml`（由脚本生成）提供图片统计
 - **展示** - 同样四列布局，viewBox 1200×200
 - **标题** - 自动从 GitHub API 获取 display name
 - **自定义** - 支持 `custom_title`、`title_color`、`text_color`、`bg_color`、`hide_border` 等参数
@@ -350,7 +350,7 @@ env:
 
 - **自动学习** - 从 GitHub API 自动学习用户的所有提交身份（Name + Email）
 - **防冒充** - git log 匹配时使用完整的 `Name <email>` 格式，防止同名冒充
-- **持久化存储** - 以 Base64 编码保存到 `stats_cache/author_identities.json`
+- **持久化存储** - 以 Base64 编码保存到 `config.toml` 的 `author_identities` 字段
 - **增量更新** - 每次处理仓库时增量学习新身份，支持用户改名场景
 - **旧格式兼容** - 自动从纯 JSON 格式迁移到 Base64 格式
 
@@ -450,7 +450,7 @@ python scripts/generate-stats.py
 
 # 运行模式
 python scripts/generate-stats.py                # 默认 actions 模式
-python scripts/generate-stats.py --mode api      # api 模式（仅生成 stats.json）
+python scripts/generate-stats.py --mode api      # api 模式（仅生成 config.toml）
 
 # 清除缓存（仅清除，不会重新运行统计）
 python scripts/generate-stats.py --clear-cache

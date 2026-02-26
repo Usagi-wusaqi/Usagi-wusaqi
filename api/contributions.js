@@ -129,11 +129,12 @@ async function fetchDisplayName(username, token) {
 /** @param {string} username */
 async function fetchImageStats(username) {
   try {
-    const url = `https://raw.githubusercontent.com/${username}/${username}/main/stats.json`;
+    const url = `https://raw.githubusercontent.com/${username}/${username}/main/config.toml`;
     const response = await fetch(url);
     if (!response.ok) return null;
-    const data = await response.json();
-    return typeof data.total_images === "number" ? data.total_images : null;
+    const text = await response.text();
+    const match = text.match(/^total_images\s*=\s*(\d+)/m);
+    return match ? parseInt(match[1], 10) : null;
   } catch {
     return null;
   }

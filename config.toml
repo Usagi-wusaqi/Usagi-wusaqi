@@ -1,0 +1,111 @@
+# generate-stats.py 配置 + 统计数据
+# 除 [stats] 段由脚本自动更新外，其余均可手动编辑
+
+# 作者身份（Base64 编码的 JSON，由脚本自动学习和更新，勿手动修改）
+author_identities = "eyJpZGVudGl0aWVzIjogWyJVc2FnaS13dXNhcWkgPDIxODE4MDIzMzZAcXEuY29tPiIsICJ3dXNhcWkgPDIxODE4MDIzMzZAcXEuY29tPiIsICJ3dXNhcWkgPDIyMjE1MjI4MCtVc2FnaS13dXNhcWlAdXNlcnMubm9yZXBseS5naXRodWIuY29tPiJdfQ=="
+
+# ---- GitHub API ----
+[api]
+# GitHub REST API 基础地址（通常无需修改）
+github_api_base = "https://api.github.com"
+# 分页请求最大页数（每次 list/commits 查询）
+max_api_pages = 10
+# 每页返回条目数（GitHub 最大支持 100）
+per_page = 100
+# 剩余配额低于此值时打印警告
+rate_limit_warn_threshold = 50
+
+# ---- Vercel 部署 ----
+[vercel]
+# Vercel 部署域名（用于 api 模式生成 README 中的卡片链接）
+base_url = "https://usagi-wusaqi.vercel.app"
+# SVG 卡片是否隐藏边框
+hide_border = true
+# Vercel CDN 缓存时间（秒）
+cache_seconds = 86400
+
+# ---- SVG 卡片 ----
+[svg]
+# 卡片标题文本（设为空字符串则不显示标题）
+custom_title = "Code Contributions"
+# 标题颜色
+title_color = "#2f80ed"
+# 正文文字颜色
+text_color = "#434d58"
+# 卡片背景颜色
+bg_color = "#fffefe"
+# 卡片边框颜色
+border_color = "#e4e2e2"
+# Additions 数值颜色
+add_color = "#28a745"
+# Deletions 数值颜色
+del_color = "#d73a49"
+# Images 数值颜色
+img_color = "#6f42c1"
+# 卡片宽度（像素）
+width = 1200
+# 卡片高度（像素）
+height = 200
+
+# SVG 布局（像素）
+[svg.layout]
+# 左右内边距
+padding = 67
+# 标题 Y 坐标
+title_y = 70
+# 统计数据行 Y 坐标
+stats_y = 120
+# 数值与标签的垂直间距
+value_gap = 36
+# 卡片圆角半径
+border_radius = 4.5
+
+# SVG 字体
+[svg.font]
+# 主字体族
+family = "'Segoe UI', Ubuntu, Sans-Serif"
+# 扩展字体族（备用）
+family_extended = "'Segoe UI', Ubuntu, 'Helvetica Neue', Sans-Serif"
+# 标题字体大小（含字重）
+header_size = "600 48px"
+# Firefox 下标题字体大小修正
+header_size_firefox = "41px"
+# 统计标签字体大小（含字重）
+stat_size = "600 20px"
+# 数值字体大小（含字重）
+bold_size = "700 36px"
+
+# SVG 列标签
+[svg.labels]
+# 新增行数列标题
+additions = "Additions"
+# 删除行数列标题
+deletions = "Deletions"
+# 净增行数列标题
+net = "Net"
+# 图片数量列标题
+images = "Images"
+
+# ---- 运行行为 ----
+[behavior]
+# 时区偏移（小时），用于时间戳格式化（8 = UTC+8 北京时间）
+timezone_offset_hours = 8
+# 被识别为图片的文件扩展名列表
+image_extensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp", ".ico"]
+# 每处理多少个 commit 打印一次进度
+progress_interval = 10
+# 是否统计图片贡献（--no-images CLI 参数可覆盖）
+include_images = true
+# 控制台分隔线宽度（字符数）
+separator_length = 60
+
+# ---- 以下由脚本自动更新，请勿手动修改 ----
+[stats]
+# 总新增行数
+total_additions = 24755
+# 总删除行数
+total_deletions = 12049
+# 总图片文件数
+total_images = 146
+# 最后更新时间（ISO 8601）
+last_updated = "2026-02-26T12:48:55+08:00"

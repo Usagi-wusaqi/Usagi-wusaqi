@@ -5,7 +5,7 @@
 - 统计所有仓库的图片贡献（images 数量）
 - 智能缓存系统，避免重复分析已处理的 commits
 - 支持 Fork 仓库（直接克隆上游仓库获取完整历史）
-- 从模板生成 README.md，输出 stats.json 供 Vercel 卡片读取
+- 从模板生成 README.md，输出 config.toml 供 Vercel 卡片读取
 
 ## 数据源策略
 - Git log 优先：完整历史数据，准确可靠
@@ -30,6 +30,12 @@
 - 永久保存历史数据，智能清理过期缓存
 """
 
+# tomllib 返回 dict[str, Any]，嵌套 .get() 会级联产生 Unknown 类型警告，
+# 以下三条指令分别抑制：成员访问 → 变量赋值 → 函数传参 三阶段的噪声。
+# pyright: reportUnknownMemberType=false
+# pyright: reportUnknownVariableType=false
+# pyright: reportUnknownArgumentType=false
+
 import argparse
 import base64
 import json
@@ -39,11 +45,14 @@ import shutil
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
+
+import tomllib
 
 # ============================================================================
 # 类型定义
@@ -72,23 +81,88 @@ class RepoContext:
 # 常量定义
 # ============================================================================
 
-GITHUB_API = "https://api.github.com"
-SEPARATOR_LENGTH = 60
-MAX_API_PAGES = 10
-PER_PAGE = 100
-RATE_LIMIT_WARN_THRESHOLD = 50
-PROGRESS_INTERVAL = 10
-IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp", ".ico"]
+# ---------- 路径（与脚本位置绑定，不可配置） ----------
 README_FILE_PATH = Path(__file__).parent.parent / "README.md"
-STATS_JSON_PATH = Path(__file__).parent.parent / "stats.json"
+CONFIG_TOML_PATH = Path(__file__).parent.parent / "config.toml"
 CACHE_DIR = Path(__file__).parent / "stats_cache"
-AUTHOR_IDENTITIES_FILE = CACHE_DIR / "author_identities.json"
 
-# 时间格式常量
-TIME_FORMAT = "%Y-%m-%d %H:%M:%S UTC+8"
-
-# Git 解析常量
+# Git 解析常量（内部使用）
 MIN_STATUS_PARTS = 2  # git show --name-status 输出至少需要的字段数
+
+# 运行时配置（main() 启动时从 config.toml 加载）
+cfg = {}
+
+
+@dataclass
+class RuntimeConfig:
+    """运行时常量（由 _apply_config() 从 config.toml 加载）"""
+
+    github_api: str = ""
+    separator_length: int = 0
+    max_api_pages: int = 0
+    per_page: int = 0
+    rate_limit_warn_threshold: int = 0
+    progress_interval: int = 0
+    image_extensions: list[str] = field(default_factory=list)
+    time_format: str = ""
+
+
+rc = RuntimeConfig()
+
+
+# ============================================================================
+# 配置加载
+# ============================================================================
+
+
+def _load_config():
+    """从 config.toml 加载配置
+
+    config.toml 是所有可配置项的唯一来源。如果不存在，返回空字典。
+    """
+    if CONFIG_TOML_PATH.exists():
+        try:
+            with CONFIG_TOML_PATH.open("rb") as f:
+                return tomllib.load(f)
+        except (OSError, tomllib.TOMLDecodeError):
+            pass
+    return tomllib.loads("")
+
+
+def _update_toml_values(content: str, updates: dict[str, str | int]) -> str:
+    """正则原地替换 TOML 文件中的键值对（保留注释和格式）"""
+    for key, value in updates.items():
+        value_str = f'"{value}"' if isinstance(value, str) else str(value)
+        new_content = re.sub(
+            rf"^({re.escape(key)}\s*=\s*).*$",
+            rf"\g<1>{value_str}",
+            content,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        if new_content == content:
+            print(f"⚠️  config.toml 中未找到键 '{key}'，跳过更新")
+        content = new_content
+    return content
+
+
+def _apply_config() -> None:
+    """用 cfg 中的值刷新 rc（RuntimeConfig），供全局引用"""
+    api = cfg.get("api", {})
+    rc.github_api = api.get("github_api_base", "")
+    rc.max_api_pages = api.get("max_api_pages", 0)
+    rc.per_page = api.get("per_page", 0)
+    rc.rate_limit_warn_threshold = api.get("rate_limit_warn_threshold", 0)
+
+    beh = cfg.get("behavior", {})
+    rc.separator_length = beh.get("separator_length", 0)
+    rc.image_extensions = beh.get("image_extensions", [])
+    rc.progress_interval = beh.get("progress_interval", 10) or 10
+
+    # time_format 由 timezone_offset_hours 派生
+    tz_hours = beh.get("timezone_offset_hours", 8)
+    tz_label = f"UTC+{tz_hours}" if tz_hours >= 0 else f"UTC{tz_hours}"
+    rc.time_format = f"%Y-%m-%d %H:%M:%S {tz_label}"
 
 
 # ============================================================================
@@ -142,51 +216,38 @@ KNOWN_AUTHOR_IDENTITIES: set[str] = set()
 
 
 def load_author_identities() -> set[str]:
-    """加载已知的作者身份列表
+    """从 cfg 中加载已知的作者身份列表
 
-    存储格式: Base64 编码的 JSON
-    兼容旧格式: 纯 JSON（自动迁移到新格式）
+    存储格式: config.toml → author_identities (Base64 编码的 JSON)
     """
-    if not AUTHOR_IDENTITIES_FILE.exists():
+    raw_data = cfg.get("author_identities", "")
+    if not raw_data:
         return set()
 
     try:
-        with AUTHOR_IDENTITIES_FILE.open(encoding="utf-8") as f:
-            raw_data = f.read().strip()
-            if not raw_data:
-                return set()
-
-            # 尝试 Base64 解码（新格式）
-            try:
-                decoded_bytes = base64.b64decode(raw_data)
-                data = json.loads(decoded_bytes.decode("utf-8"))
-            except (ValueError, UnicodeDecodeError):
-                # 回退到纯 JSON 解码（旧格式兼容）
-                data = json.loads(raw_data)
-                # 触发迁移：下次保存时会自动转换为 Base64 格式
-
-            identities = set(data.get("identities", []))
-            if identities:
-                print_color(f"💾 已加载 {len(identities)} 个已知作者身份", Colors.GREEN)
-            return identities
-    except (OSError, json.JSONDecodeError) as e:
+        decoded_bytes = base64.b64decode(raw_data)
+        data = json.loads(decoded_bytes.decode("utf-8"))
+        identities = set(data.get("identities", []))
+        if identities:
+            print_color(f"💾 已加载 {len(identities)} 个已知作者身份", Colors.GREEN)
+        return identities
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as e:
         print_color(f"⚠️  加载作者身份失败: {e}", Colors.YELLOW)
         return set()
 
 
 def save_author_identities(identities: set[str]) -> None:
-    """保存作者身份列表（Base64 编码，人类不可读）"""
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
+    """保存作者身份列表到 config.toml（Base64 编码）"""
     try:
-        # 构建 JSON 数据
         data = {"identities": sorted(identities)}
         json_str = json.dumps(data, ensure_ascii=False)
-        # Base64 编码
         encoded_data = base64.b64encode(json_str.encode("utf-8")).decode("ascii")
+        cfg["author_identities"] = encoded_data
 
-        with AUTHOR_IDENTITIES_FILE.open("w", encoding="utf-8") as f:
-            f.write(encoded_data)
+        # 正则原地替换 author_identities 值（保留注释和格式）
+        content = CONFIG_TOML_PATH.read_text(encoding="utf-8")
+        content = _update_toml_values(content, {"author_identities": encoded_data})
+        CONFIG_TOML_PATH.write_text(content, encoding="utf-8", newline="\n")
         print_color(f"💾 已保存 {len(identities)} 个作者身份", Colors.GREEN)
     except OSError as e:
         print_color(f"⚠️  保存作者身份失败: {e}", Colors.YELLOW)
@@ -224,8 +285,8 @@ def learn_author_identities_from_api(
 
     # 只请求 1 页（100 条 commits），足够学习常见身份
     api_url = (
-        f"{GITHUB_API}/repos/{owner}/{repo_name}/commits"
-        f"?author={username}&per_page={PER_PAGE}&page=1"
+        f"{rc.github_api}/repos/{owner}/{repo_name}/commits"
+        f"?author={username}&per_page={rc.per_page}&page=1"
     )
     output, returncode = github_api_request(api_url)
 
@@ -267,7 +328,7 @@ def print_color(message: str, color: str = Colors.NC) -> None:
 
 def print_separator(title: str | None = None, color: str = Colors.GREEN) -> None:
     """打印分隔线，可选标题"""
-    separator = "=" * SEPARATOR_LENGTH
+    separator = "=" * rc.separator_length
     print_color(separator, color)
     if title:
         print_color(title, color)
@@ -276,7 +337,7 @@ def print_separator(title: str | None = None, color: str = Colors.GREEN) -> None
 
 def is_image_file(filename: str) -> bool:
     """检查文件是否为图片"""
-    return any(filename.lower().endswith(ext) for ext in IMAGE_EXTENSIONS)
+    return any(filename.lower().endswith(ext) for ext in rc.image_extensions)
 
 
 def print_stats_summary(
@@ -339,7 +400,7 @@ def github_api_request(api_url: str) -> tuple[str, int]:
     try:
         with urllib.request.urlopen(req) as resp:
             remaining = resp.headers.get("X-RateLimit-Remaining", "")
-            if remaining.isdigit() and int(remaining) < RATE_LIMIT_WARN_THRESHOLD:
+            if remaining.isdigit() and int(remaining) < rc.rate_limit_warn_threshold:
                 print_color(f"⚠️  API 配额剩余: {remaining}", Colors.YELLOW)
             return resp.read().decode("utf-8"), 0
     except urllib.error.HTTPError as e:
@@ -384,8 +445,9 @@ def _parse_iso_timestamp(ts: str) -> datetime:
 
 def get_current_time() -> str:
     """获取当前时间字符串"""
-    china_tz = timezone(timedelta(hours=8))
-    return datetime.now(china_tz).strftime(TIME_FORMAT)
+    tz_hours = cfg.get("behavior", {}).get("timezone_offset_hours", 8)
+    tz = timezone(timedelta(hours=tz_hours))
+    return datetime.now(tz).strftime(rc.time_format)
 
 
 def calculate_cache_statistics(cache_data: CacheData) -> tuple[int, int, int, int]:
@@ -595,8 +657,6 @@ def aggregate_stats_from_cache() -> StatsData:
     latest_ts = ""
 
     for cache_file in sorted(CACHE_DIR.glob("*.json")):
-        if cache_file.name == "author_identities.json":
-            continue
         try:
             with cache_file.open(encoding="utf-8") as f:
                 data = json.load(f)
@@ -687,7 +747,7 @@ def _partition_cached_items(
             is_api_fallback
             and min_timestamp
             and max_timestamp
-            and item_ts < min_timestamp
+            and (item_ts < min_timestamp or item_ts > max_timestamp)
         ):
             out_of_range.append(item)
         else:
@@ -711,7 +771,7 @@ def _log_cache_cleanup_mode(
         if out_of_range_count > 0:
             print_color(f"    ℹ️  {mode_desc}", Colors.NC)
             print_color(
-                f"       保留 {out_of_range_count} 个超出 API 范围的老数据", Colors.NC
+                f"       保留 {out_of_range_count} 个超出 API 范围的数据", Colors.NC
             )
     else:
         print_color("    ℹ️  Git log 模式（完整历史）", Colors.NC)
@@ -807,12 +867,12 @@ def get_repos() -> list[RepoInfo]:
 
     repos: list[RepoInfo] = []
     page = 1
-    max_pages = MAX_API_PAGES
+    max_pages = rc.max_api_pages
 
     while page <= max_pages:
         api_url = (
-            f"{GITHUB_API}/users/{ORIGIN_USERNAME}/repos"
-            f"?per_page={PER_PAGE}&type=all&page={page}"
+            f"{rc.github_api}/users/{ORIGIN_USERNAME}/repos"
+            f"?per_page={rc.per_page}&type=all&page={page}"
         )
         output, returncode = github_api_request(api_url)
 
@@ -840,7 +900,7 @@ def get_repos() -> list[RepoInfo]:
 
             print_color(f"   第 {page} 页：获取到 {len(parsed_data)} 个仓库", Colors.NC)
 
-            if len(parsed_data) < PER_PAGE:
+            if len(parsed_data) < rc.per_page:
                 break
 
             page += 1
@@ -880,7 +940,7 @@ def get_upstream_repo(repo: RepoInfo) -> tuple[str | None, str | None]:
         if not repo_name:
             return None, None
 
-        api_url = f"{GITHUB_API}/repos/{ORIGIN_USERNAME}/{repo_name}"
+        api_url = f"{rc.github_api}/repos/{ORIGIN_USERNAME}/{repo_name}"
         output, returncode = github_api_request(api_url)
         if returncode == 0:
             try:
@@ -961,11 +1021,11 @@ def get_commits_from_git_log(
         safe = author.replace('"', '\\"')
         # --author 匹配主作者 / --grep 匹配 Co-authored-by 标记
         for flag in (f"--author={safe}", f"--grep=Co-authored-by: {safe}"):
-            output, rc = run_command(
+            output, returncode = run_command(
                 ["git", "log", f"origin/{default_branch}", flag, "--format=%H%n%aI"],
                 cwd=repo_path,
             )
-            if rc == 0:
+            if returncode == 0:
                 _collect_commits(output, all_shas, all_commits)
 
     if all_commits:
@@ -983,20 +1043,22 @@ def get_commits_from_api(
     repo_name: str,
     username: str,
     default_branch: str = "main",
-    max_pages: int = MAX_API_PAGES,
+    max_pages: int = 0,
 ) -> list[CommitData]:
     """从 GitHub API 获取用户的最近 commits（分页，最多 10 页）
 
     仅作为 git log 失败时的兜底方案
     注意: API 有分页限制，超出范围的老 commits 将保留缓存
     """
+    if not max_pages:
+        max_pages = rc.max_api_pages
     page = 1
-    per_page = PER_PAGE
+    per_page = rc.per_page
     all_commits: list[CommitData] = []
 
     while page <= max_pages:
         api_url = (
-            f"{GITHUB_API}/repos/{owner}/{repo_name}/commits"
+            f"{rc.github_api}/repos/{owner}/{repo_name}/commits"
             f"?author={username}&sha={default_branch}"
             f"&per_page={per_page}&page={page}"
         )
@@ -1110,10 +1172,10 @@ def _get_commit_details_from_git(
     commit_data: CommitData = {"files": [], "stats": {"additions": 0, "deletions": 0}}
 
     # 命令 1：--shortstat 获取增删行数汇总
-    output, rc = run_command(
+    output, returncode = run_command(
         ["git", "show", "--shortstat", "--pretty=format:", sha], cwd=repo_path
     )
-    if rc == 0:
+    if returncode == 0:
         for line in output.split("\n"):
             stripped = line.strip()
             if not stripped:
@@ -1132,10 +1194,10 @@ def _get_commit_details_from_git(
                 break
 
     # 命令 2：--name-status 获取文件状态（用于图片计数）
-    output, rc = run_command(
+    output, returncode = run_command(
         ["git", "show", "--name-status", "--pretty=format:", sha], cwd=repo_path
     )
-    if rc == 0:
+    if returncode == 0:
         for line in output.split("\n"):
             parts = line.split("\t")
             if len(parts) >= MIN_STATUS_PARTS:
@@ -1155,7 +1217,7 @@ def _get_commit_details_from_git(
 
 def _get_commit_details_from_api(owner: str, repo_name: str, sha: str) -> CommitData:
     """从 API 获取 commit 详情"""
-    api_url = f"{GITHUB_API}/repos/{owner}/{repo_name}/commits/{sha}"
+    api_url = f"{rc.github_api}/repos/{owner}/{repo_name}/commits/{sha}"
     output, returncode = github_api_request(api_url)
     if returncode == 0:
         try:
@@ -1314,7 +1376,7 @@ def _process_all_commits(
             continue
 
         processed += 1
-        if processed % PROGRESS_INTERVAL == 0:
+        if processed % rc.progress_interval == 0:
             pct = processed * 100 // total_commits
             print_color(
                 f"    📊 处理中: {processed}/{total_commits} ({pct}%)", Colors.NC
@@ -1447,11 +1509,11 @@ def process_repos(repos: list[RepoInfo], *, include_images: bool = True) -> None
             repo_path = temp_dir / clone_repo_name
             if repo_path.exists():
                 print_color("  🔄 更新本地仓库...", Colors.YELLOW)
-                _, rc = run_command(
+                _, returncode = run_command(
                     "git fetch --unshallow origin",
                     cwd=str(repo_path),
                 )
-                if rc != 0:
+                if returncode != 0:
                     run_command("git fetch origin", cwd=str(repo_path))
             else:
                 print_color("  📥 克隆仓库...", Colors.YELLOW)
@@ -1531,10 +1593,22 @@ def generate_readme_from_template(template_path: Path, *, mode: str = "actions")
     if mode == "actions":
         card_src = "contributions.svg"
     else:
+        vercel = cfg.get("vercel", {})
+        base_url = vercel.get("base_url", "")
+        hide_border = vercel.get("hide_border", True)
+        cache_seconds = vercel.get("cache_seconds", 86400)
+
+        custom_title = cfg.get("svg", {}).get("custom_title")
+        title_param = (
+            f"&custom_title={urllib.parse.quote(custom_title)}"
+            if custom_title is not None
+            else ""
+        )
+        hide_param = "&hide_border=true" if hide_border else ""
         card_src = (
-            f"https://usagi-wusaqi.vercel.app/api/contributions"
+            f"{base_url}/api/contributions"
             f"?username={ORIGIN_USERNAME}"
-            f"&hide_border=true&custom_title=Code%20Contributions&cache_seconds=86400"
+            f"{hide_param}{title_param}&cache_seconds={cache_seconds}"
         )
 
     # 准备替换数据
@@ -1585,57 +1659,45 @@ def print_update_summary(stats: StatsData) -> None:
 
 
 def save_stats_json(stats: StatsData) -> None:
-    """输出 stats.json 供 Vercel Serverless Function 读取
+    """将统计数据写入 config.toml 的 [stats] 段
 
-    last_updated 使用最新 commit 的时间戳（而非脚本运行时间），
-    这样没有新代码时文件内容不变 → git 无 diff → 不产生空提交。
+    - 正则原地替换，保留注释和格式
+    - [stats] 段每次运行时更新
+    - last_updated 使用最新 commit 的时间戳（而非脚本运行时间），
+      这样没有新代码时文件内容不变 → git 无 diff → 不产生空提交。
     """
     latest_ts = stats.get("latest_commit_timestamp", "")
-    # 统一用 ISO 8601 格式；无 commit 时回退到当前时间的 ISO 格式
     if latest_ts:
         last_updated = str(latest_ts)
     else:
-        last_updated = datetime.now(tz=timezone(timedelta(hours=8))).isoformat()
+        tz_hours = cfg.get("behavior", {}).get("timezone_offset_hours", 8)
+        last_updated = datetime.now(tz=timezone(timedelta(hours=tz_hours))).isoformat()
 
-    comment = "generate-stats.py 自动生成。Vercel API 读取 total_images；Actions SVG 读取全部字段"
+    updates = {
+        "total_additions": stats.get("total_additions", 0),
+        "total_deletions": stats.get("total_deletions", 0),
+        "total_images": stats.get("total_images", 0),
+        "last_updated": last_updated,
+    }
+
     try:
-        with STATS_JSON_PATH.open("w", encoding="utf-8", newline="\n") as f:
-            # 第一行：_comment（静态）；第二行：数据字段（动态，git diff 只变这行）
-            f.write('{"_comment":' + json.dumps(comment, ensure_ascii=False) + ",\n")
-            rest: dict[str, int | str] = {
-                "total_additions": stats.get("total_additions", 0),
-                "total_deletions": stats.get("total_deletions", 0),
-                "total_images": stats.get("total_images", 0),
-                "last_updated": last_updated,
-            }
-            f.write(
-                json.dumps(rest, ensure_ascii=False, separators=(",", ":"))[1:] + "\n"
-            )
-        print_color(f"✅ stats.json 已更新: {STATS_JSON_PATH}", Colors.GREEN)
+        content = CONFIG_TOML_PATH.read_text(encoding="utf-8")
+        content = _update_toml_values(content, updates)
+        CONFIG_TOML_PATH.write_text(content, encoding="utf-8", newline="\n")
+        print_color(f"✅ config.toml 已更新: {CONFIG_TOML_PATH}", Colors.GREEN)
     except OSError as e:
-        print_color(f"⚠️  保存 stats.json 失败: {e}", Colors.RED)
+        print_color(f"⚠️  保存 config.toml 失败: {e}", Colors.RED)
 
 
 def _read_current_stats() -> StatsData | None:
-    """从 stats.json 中读取当前的统计数字
-
-    返回: 包含统计数据的字典，或 None
-    """
-    if not STATS_JSON_PATH.exists():
-        return None
-
-    try:
-        with STATS_JSON_PATH.open(encoding="utf-8") as f:
-            data = json.load(f)
-        if "total_images" in data:
-            return {
-                "total_additions": int(data.get("total_additions", 0)),
-                "total_deletions": int(data.get("total_deletions", 0)),
-                "total_images": int(data["total_images"]),
-            }
-    except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
-        pass
-
+    """从 cfg 的 stats 段读取当前统计数字（启动时已加载）"""
+    stats_section = cfg.get("stats", {})
+    if "total_images" in stats_section:
+        return {
+            "total_additions": int(stats_section.get("total_additions", 0)),
+            "total_deletions": int(stats_section.get("total_deletions", 0)),
+            "total_images": int(stats_section["total_images"]),
+        }
     return None
 
 
@@ -1708,75 +1770,94 @@ def _escape_html(text: str) -> str:
 def generate_contributions_svg(
     stats: StatsData,
     display_name: str,
-    *,
-    custom_title: str | None = None,
-    title_color: str = "#2f80ed",
-    text_color: str = "#434d58",
-    bg_color: str = "#fffefe",
-    border_color: str = "#e4e2e2",
 ) -> str:
-    """生成贡献统计 SVG 卡片（与 Vercel 版本 renderContributionsCard 对齐）"""
+    """生成贡献统计 SVG 卡片（与 Vercel 版本 renderContributionsCard 对齐）
+
+    颜色、尺寸、标题等均从 cfg["svg"] 读取。
+    """
+    svg = cfg.get("svg", {})
+    layout = svg.get("layout", {})
+    font = svg.get("font", {})
+    labels = svg.get("labels", {})
+
     additions = int(stats.get("total_additions", 0))
     deletions = int(stats.get("total_deletions", 0))
     images = int(stats.get("total_images", 0))
     net = additions - deletions
     net_sign = "+" if net >= 0 else ""
-    add_color = "#28a745"
-    del_color = "#d73a49"
-    net_color = add_color if net >= 0 else del_color
-    img_color = "#6f42c1"
 
+    title_color = svg.get("title_color", "")
+    text_color = svg.get("text_color", "")
+    bg_color = svg.get("bg_color", "")
+    border_color = svg.get("border_color", "")
+    add_color = svg.get("add_color", "")
+    del_color = svg.get("del_color", "")
+    img_color = svg.get("img_color", "")
+    net_color = add_color if net >= 0 else del_color
+
+    custom_title = svg.get("custom_title")
     if custom_title is not None:
         title_text = _escape_html(custom_title)
     else:
         suffix = "" if _escape_html(display_name).rstrip().endswith("s") else "s"
         title_text = f"{_escape_html(display_name)}&apos;{suffix} Code Contributions"
 
-    width = 1200
-    height = 200
-    padding = 67
-    title_y = 70
-    stats_y = 120
-    value_gap = 36
+    width = svg.get("width", 0)
+    height = svg.get("height", 0)
+    padding = layout.get("padding", 67)
+    title_y = layout.get("title_y", 70)
+    stats_y = layout.get("stats_y", 120)
+    value_gap = layout.get("value_gap", 36)
+    border_radius = layout.get("border_radius", 4.5)
     col_width = (width - padding) // 4
+
+    font_family = font.get("family", "'Segoe UI', Ubuntu, Sans-Serif")
+    font_family_ext = font.get(
+        "family_extended", "'Segoe UI', Ubuntu, 'Helvetica Neue', Sans-Serif"
+    )
+    header_size = font.get("header_size", "600 48px")
+    header_size_ff = font.get("header_size_firefox", "41px")
+    stat_size = font.get("stat_size", "600 20px")
+    bold_size = font.get("bold_size", "700 36px")
+
+    lbl_add = labels.get("additions", "Additions")
+    lbl_del = labels.get("deletions", "Deletions")
+    lbl_net = labels.get("net", "Net")
+    lbl_img = labels.get("images", "Images")
 
     return f"""\
 <svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" fill="none" role="img">
   <style>
-    .header {{ font: 600 48px 'Segoe UI', Ubuntu, Sans-Serif; fill: {title_color}; }}
-    @supports(-moz-appearance: auto) {{ .header {{ font-size: 41px; }} }}
-    .stat {{ font: 600 20px 'Segoe UI', Ubuntu, "Helvetica Neue", Sans-Serif; fill: {text_color}; }}
-    .bold {{ font: 700 36px 'Segoe UI', Ubuntu, "Helvetica Neue", Sans-Serif; }}
+    .header {{ font: {header_size} {font_family}; fill: {title_color}; }}
+    @supports(-moz-appearance: auto) {{ .header {{ font-size: {header_size_ff}; }} }}
+    .stat {{ font: {stat_size} {font_family_ext}; fill: {text_color}; }}
+    .bold {{ font: {bold_size} {font_family_ext}; }}
   </style>
-  <rect x="0.5" y="0.5" width="{width - 1}" height="{height - 1}" rx="4.5" fill="{bg_color}" stroke="{border_color}" stroke-width="1"/>
+  <rect x="0.5" y="0.5" width="{width - 1}" height="{height - 1}" rx="{border_radius}" fill="{bg_color}" stroke="{border_color}" stroke-width="1"/>
   <text x="{padding}" y="{title_y}" class="header">{title_text}</text>
   <g transform="translate({padding}, {stats_y})">
-    <text x="0" y="0" class="stat">Additions</text>
+    <text x="0" y="0" class="stat">{lbl_add}</text>
     <text x="0" y="{value_gap}" class="stat bold" style="fill:{add_color}">+{_format_number(additions)}</text>
   </g>
   <g transform="translate({padding + col_width}, {stats_y})">
-    <text x="0" y="0" class="stat">Deletions</text>
+    <text x="0" y="0" class="stat">{lbl_del}</text>
     <text x="0" y="{value_gap}" class="stat bold" style="fill:{del_color}">-{_format_number(deletions)}</text>
   </g>
   <g transform="translate({padding + col_width * 2}, {stats_y})">
-    <text x="0" y="0" class="stat">Net</text>
+    <text x="0" y="0" class="stat">{lbl_net}</text>
     <text x="0" y="{value_gap}" class="stat bold" style="fill:{net_color}">{net_sign}{_format_number(net)}</text>
   </g>
   <g transform="translate({padding + col_width * 3}, {stats_y})">
-    <text x="0" y="0" class="stat">Images</text>
+    <text x="0" y="0" class="stat">{lbl_img}</text>
     <text x="0" y="{value_gap}" class="stat bold" style="fill:{img_color}">{_format_number(images)}</text>
   </g>
 </svg>"""
 
 
-def save_contributions_svg(
-    stats: StatsData, *, custom_title: str | None = None
-) -> bool:
+def save_contributions_svg(stats: StatsData) -> bool:
     """生成并保存贡献统计 SVG 卡片"""
     display_name = ORIGIN_USERNAME
-    svg_content = generate_contributions_svg(
-        stats, display_name, custom_title=custom_title
-    )
+    svg_content = generate_contributions_svg(stats, display_name)
     try:
         with SVG_CARD_PATH.open("w", encoding="utf-8", newline="\n") as f:
             f.write(svg_content)
@@ -1796,25 +1877,35 @@ def save_contributions_svg(
 
 def main() -> int:
     """主函数"""
+    global cfg
+
     parser = argparse.ArgumentParser(description="生成 GitHub 统计")
-    parser.add_argument("--no-images", action="store_true", help="不统计图片贡献")
     parser.add_argument(
-        "--custom-title", default=None, help="自定义 SVG 卡片标题（默认带用户名）"
+        "--no-images", action="store_true", help="不统计图片贡献（覆盖 config）"
     )
     parser.add_argument("--clear-cache", action="store_true", help="清除缓存文件")
     parser.add_argument(
         "--mode",
         choices=["actions", "api"],
         default="actions",
-        help="运行模式: actions=生成本地SVG+更新README, api=仅stats.json供Vercel读取+更新README (默认: actions)",
+        help="运行模式: actions=生成本地SVG+更新README, api=仅config.toml供Vercel读取+更新README (默认: actions)",
     )
     args = parser.parse_args()
+
+    # 加载集中配置
+    cfg = _load_config()
+    _apply_config()
+
+    # CLI --no-images 覆盖 config
+    include_images = cfg.get("behavior", {}).get("include_images", True)
+    if args.no_images:
+        include_images = False
 
     print_separator("🚀 开始生成 GitHub 统计...")
     print_color("📊 统计配置:", Colors.YELLOW)
     print_color(f"   - 运行模式: {args.mode}", Colors.NC)
-    print_color(f"   - 图片统计: {'关闭' if args.no_images else '开启'}", Colors.NC)
-    if not args.no_images:
+    print_color(f"   - 图片统计: {'关闭' if not include_images else '开启'}", Colors.NC)
+    if include_images:
         print_color(f"   - 缓存目录: {CACHE_DIR}", Colors.NC)
     print_separator()
 
@@ -1845,7 +1936,7 @@ def main() -> int:
 
     # 处理仓库（克隆 → 分析 → 保存缓存）
     try:
-        process_repos(repos, include_images=not args.no_images)
+        process_repos(repos, include_images=include_images)
     except RateLimitError as e:
         print_color(f"❌ {e}", Colors.RED)
         return 1
@@ -1872,13 +1963,11 @@ def main() -> int:
     if not stats_changed:
         print_color("ℹ️  统计数据未变化，跳过全部更新", Colors.YELLOW)
     else:
-        # 写入 stats.json（last_updated = 最新 commit 时间戳）
+        # 写入 config.toml（last_updated = 最新 commit 时间戳）
         save_stats_json(stats)
 
         # Actions 模式：从 stats 数据生成本地 SVG 卡片
-        if args.mode == "actions" and not save_contributions_svg(
-            stats, custom_title=args.custom_title
-        ):
+        if args.mode == "actions" and not save_contributions_svg(stats):
             return 1
 
         # 更新 README.md
