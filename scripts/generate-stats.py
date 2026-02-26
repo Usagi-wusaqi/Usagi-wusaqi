@@ -38,6 +38,8 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -74,6 +76,7 @@ GITHUB_API = "https://api.github.com"
 SEPARATOR_LENGTH = 60
 MAX_API_PAGES = 10
 PER_PAGE = 100
+RATE_LIMIT_WARN_THRESHOLD = 50
 PROGRESS_INTERVAL = 10
 IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp", ".ico"]
 README_FILE_PATH = Path(__file__).parent.parent / "README.md"
@@ -218,33 +221,22 @@ def learn_author_identities_from_api(
     print_color("    🔍 从 API 学习作者身份...", Colors.YELLOW)
 
     identities: set[str] = set()
-    page = 1
 
-    while page <= 3:  # 只查前 3 页，足够学习身份
-        api_url = (
-            f"{GITHUB_API}/repos/{owner}/{repo_name}/commits"
-            f"?author={username}&per_page={PER_PAGE}&page={page}"
-        )
-        output, returncode = github_api_request(api_url)
+    # 只请求 1 页（100 条 commits），足够学习常见身份
+    api_url = (
+        f"{GITHUB_API}/repos/{owner}/{repo_name}/commits"
+        f"?author={username}&per_page={PER_PAGE}&page=1"
+    )
+    output, returncode = github_api_request(api_url)
 
-        if returncode != 0:
-            break
-
+    if returncode == 0:
         try:
             commits: list[CommitData] = json.loads(output)
-            if not commits:
-                break
-
             for commit in commits:
                 if identity := extract_author_from_commit(commit):
                     identities.add(identity)
-
-            if len(commits) < PER_PAGE:
-                break
-            page += 1
-
         except json.JSONDecodeError:
-            break
+            pass
 
     if identities:
         print_color(f"    ✅ 发现 {len(identities)} 个作者身份", Colors.GREEN)
@@ -298,12 +290,16 @@ def print_stats_summary(
         print_color(f"{prefix}✅ 图片贡献: {images} images", Colors.GREEN)
 
 
-def run_command(cmd: str, cwd: str | None = None) -> tuple[str, int]:
-    """运行命令并返回输出"""
+def run_command(cmd: str | list[str], cwd: str | None = None) -> tuple[str, int]:
+    """运行命令并返回输出
+
+    cmd 为 str 时使用 shell=True，为 list 时使用 shell=False（更安全）。
+    """
+    use_shell = isinstance(cmd, str)
     try:
         result = subprocess.run(
             cmd,
-            shell=True,
+            shell=use_shell,
             capture_output=True,
             text=True,
             cwd=cwd,
@@ -315,18 +311,43 @@ def run_command(cmd: str, cwd: str | None = None) -> tuple[str, int]:
         return "", 1
 
 
+class RateLimitError(Exception):
+    """GitHub API 配额耗尽时抛出"""
+
+
 def github_api_request(api_url: str) -> tuple[str, int]:
     """执行 GitHub API 请求
 
-    统一封装 curl 命令，包含认证头和 Accept 头。
+    使用 urllib 替代 curl，支持连接复用和 rate limit 检测。
+    当 API 配额耗尽时抛出 RateLimitError。
 
     返回: (output, returncode)
     """
-    curl_cmd = (
-        f'curl -s -H "Authorization: token {TOKEN}" '
-        f'-H "Accept: application/vnd.github.v3+json" "{api_url}"'
-    )
-    return run_command(curl_cmd)
+    req = urllib.request.Request(api_url)
+    req.add_header("Accept", "application/vnd.github.v3+json")
+    if TOKEN:
+        req.add_header("Authorization", f"token {TOKEN}")
+
+    try:
+        with urllib.request.urlopen(req) as resp:
+            remaining = resp.headers.get("X-RateLimit-Remaining", "")
+            if remaining.isdigit() and int(remaining) < RATE_LIMIT_WARN_THRESHOLD:
+                print_color(f"⚠️  API 配额剩余: {remaining}", Colors.YELLOW)
+            return resp.read().decode("utf-8"), 0
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        if e.code in (403, 429):
+            remaining = e.headers.get("X-RateLimit-Remaining", "")
+            if remaining.isdigit() and int(remaining) == 0:
+                try:
+                    msg = json.loads(body).get("message", f"HTTP {e.code}")
+                except json.JSONDecodeError:
+                    msg = f"HTTP {e.code}"
+                raise RateLimitError(f"GitHub API 配额耗尽: {msg}") from e
+        return body, 1
+    except urllib.error.URLError as e:
+        print_color(f"❌ 网络请求失败: {e.reason}", Colors.RED)
+        return "", 1
 
 
 def replace_placeholders(content: str, replacements: dict[str, str]) -> str:
@@ -428,9 +449,10 @@ def _serialize_cache(data: dict[str, dict[str, int] | CacheData]) -> str:
     lines.append(f'  "_metadata": {metadata},')
     lines.append('  "data": {')
 
-    repo_names = list(data["data"].keys())
+    repo_data = cast(CacheData, data["data"])
+    repo_names = list(repo_data.keys())
     for ri, repo_name in enumerate(repo_names):
-        commits = data["data"][repo_name]
+        commits = repo_data[repo_name]
         lines.append(f'    "{repo_name}": [')
         for ci, commit in enumerate(commits):
             entry = json.dumps(commit, ensure_ascii=False)
@@ -484,8 +506,9 @@ def save_cache(repo_name: str, cache_data: CacheData) -> bool:
             "data": sorted_cache_data,
         }
 
+        serialized = _serialize_cache(cache_data_with_metadata)
         with cache_file.open("w", encoding="utf-8", newline="\n") as f:
-            f.write(_serialize_cache(cache_data_with_metadata))
+            f.write(serialized)
 
         print_color(f"✅ 缓存已保存: {cache_file}", Colors.GREEN)
         print_color(f"   commits: {total_commits}", Colors.NC)
@@ -809,7 +832,13 @@ def get_commits_from_git_log(
 
     for author in authors:
         safe_author = author.replace('"', '\\"')
-        git_cmd = f'git log origin/{default_branch} --author="{safe_author}" --format="%H%n%aI"'
+        git_cmd = [
+            "git",
+            "log",
+            f"origin/{default_branch}",
+            f"--author={safe_author}",
+            "--format=%H%n%aI",
+        ]
         output, returncode = run_command(git_cmd, cwd=repo_path)
 
         if returncode != 0:
@@ -922,8 +951,7 @@ def _fetch_commits_with_fallback(
 
     返回: (commits, is_api_fallback)
     """
-    # 每次都从 API 增量学习身份（支持用户改名场景）
-    # API 只查前几页，性能影响很小
+    # 每个仓库都尝试学习身份（每次只 1 次 API 调用）
     new_identities = learn_author_identities_from_api(
         ctx.owner, ctx.repo_name, ctx.username
     )
@@ -966,20 +994,6 @@ def _fetch_commits_with_fallback(
     return [], False
 
 
-def _find_cached_commit(
-    cache_data: CacheData,
-    repo_name: str,
-    commit_url: str,
-) -> CommitData | None:
-    """在缓存中查找 commit"""
-    if repo_name not in cache_data:
-        return None
-    for item in cache_data[repo_name]:
-        if item.get("url") == commit_url:
-            return item
-    return None
-
-
 def _get_commit_details_from_git(
     repo_path: str,
     sha: str,
@@ -988,7 +1002,7 @@ def _get_commit_details_from_git(
     commit_data: CommitData = {}
 
     # 获取文件状态（仅用于图片统计）
-    git_cmd = f'git show --name-status --pretty="" {sha}'
+    git_cmd = ["git", "show", "--name-status", "--pretty=", sha]
     status_output, returncode = run_command(git_cmd, cwd=repo_path)
 
     if returncode != 0:
@@ -1000,10 +1014,18 @@ def _get_commit_details_from_git(
         if line.strip():
             parts = line.split("\t")
             if len(parts) >= MIN_STATUS_PARTS:
+                status_code = parts[0].rstrip("0123456789")  # R100->R, C100->C
+                if status_code in ("R", "C") and len(parts) >= 3:
+                    # Rename/Copy: 取新文件名 (parts[2])
+                    filename = parts[2]
+                    status = "added" if status_code == "C" else "modified"
+                else:
+                    filename = parts[1]
+                    status = "added" if parts[0] == "A" else "modified"
                 commit_data["files"].append(
                     {
-                        "filename": parts[1],
-                        "status": "added" if parts[0] == "A" else "modified",
+                        "filename": filename,
+                        "status": status,
                     }
                 )
 
@@ -1146,6 +1168,13 @@ def _process_all_commits(
     processed = 0
     total_commits = len(all_commits)
 
+    # 构建缓存索引 O(1) 查找，替代 _find_cached_commit 的 O(n) 扫描
+    cache_index: dict[str, CommitData] = {}
+    for item in cache_data.get(ctx.repo_name, []):
+        url = item.get("url")
+        if isinstance(url, str):
+            cache_index[url] = item
+
     for commit in all_commits:
         sha = commit.get("sha")
         if not sha or not isinstance(sha, str):
@@ -1159,7 +1188,7 @@ def _process_all_commits(
             )
 
         commit_url = f"https://github.com/{ctx.owner}/{ctx.repo_name}/commit/{sha}"
-        cached_data = _find_cached_commit(cache_data, ctx.repo_name, commit_url)
+        cached_data = cache_index.get(commit_url)
 
         if cached_data:
             # 使用缓存数据（--no-images 模式下跳过累加）
@@ -1313,7 +1342,10 @@ def process_repos(repos: list[RepoInfo], *, include_images: bool = True) -> Stat
         # 清理临时目录（确保异常时也能清理）
         print_color("\n  🧹 清理临时文件...", Colors.YELLOW)
         if temp_dir.exists():
-            shutil.rmtree(temp_dir)
+            try:
+                shutil.rmtree(temp_dir)
+            except OSError as e:
+                print_color(f"  ⚠️  清理临时目录失败: {e}", Colors.YELLOW)
 
     print_separator("📈 汇总统计")
     if include_images:
@@ -1413,7 +1445,7 @@ def print_update_summary(stats: StatsData) -> None:
 
 def save_stats_json(stats: StatsData) -> None:
     """输出 stats.json 供 Vercel Serverless Function 读取"""
-    data = {
+    data: dict[str, int | str] = {
         "total_images": stats.get("total_images", 0),
         "last_updated": get_current_time(),
     }
@@ -1542,7 +1574,11 @@ def main() -> int:
         return 1
 
     # 处理仓库
-    stats = process_repos(repos, include_images=not args.no_images)
+    try:
+        stats = process_repos(repos, include_images=not args.no_images)
+    except RateLimitError as e:
+        print_color(f"❌ {e}", Colors.RED)
+        return 1
 
     # 更新 README.md
     if not update_readme(stats):

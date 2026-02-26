@@ -3,7 +3,7 @@
 // Usage: /api/contributions?username=xxx&hide_border=true&cache_seconds=86400
 
 const GITHUB_API = "https://api.github.com";
-const MAX_RETRIES = 15;
+const MAX_RETRIES = 10;
 const RETRY_DELAY = 1000;
 const BATCH_SIZE = 10;
 
@@ -11,9 +11,14 @@ const BATCH_SIZE = 10;
 
 // ---- Validators ----
 
+/** @param {string} hex */
 const isValidHexColor = (hex) =>
   /^([A-Fa-f0-9]{3,4}|[A-Fa-f0-9]{6}|[A-Fa-f0-9]{8})$/.test(hex);
 
+/**
+ * @param {string} value
+ * @param {string} fallback
+ */
 function sanitizeColor(value, fallback) {
   if (!value) return fallback;
   return isValidHexColor(value) ? `#${value}` : fallback;
@@ -21,7 +26,34 @@ function sanitizeColor(value, fallback) {
 
 // ---- GitHub API helpers ----
 
+class RateLimitError extends Error {
+  /**
+   * @param {number} remaining
+   * @param {number} resetAt
+   */
+  constructor(remaining, resetAt) {
+    super(`GitHub API rate limit exceeded (remaining: ${remaining}, resets at ${new Date(resetAt * 1000).toISOString()})`);
+    this.name = "RateLimitError";
+  }
+}
+
+/** @param {Response} response */
+function checkRateLimit(response) {
+  if (response.status === 403 || response.status === 429) {
+    const remaining = parseInt(response.headers.get("x-ratelimit-remaining") || "-1", 10);
+    const reset = parseInt(response.headers.get("x-ratelimit-reset") || "0", 10);
+    if (remaining === 0 || response.status === 429) {
+      throw new RateLimitError(remaining, reset);
+    }
+  }
+}
+
+/**
+ * @param {string} url
+ * @param {string} [token]
+ */
 async function githubFetch(url, token) {
+  /** @type {Record<string, string>} */
   const headers = {
     Accept: "application/vnd.github.v3+json",
     "User-Agent": "github-readme-contributions",
@@ -29,9 +61,15 @@ async function githubFetch(url, token) {
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
-  return fetch(url, { headers });
+  const response = await fetch(url, { headers });
+  checkRateLimit(response);
+  return response;
 }
 
+/**
+ * @param {string} username
+ * @param {string} [token]
+ */
 async function fetchAllRepos(username, token) {
   const repos = [];
   let page = 1;
@@ -52,23 +90,32 @@ async function fetchAllRepos(username, token) {
   return repos;
 }
 
-async function getUpstreamOwner(repo, token) {
-  if (!repo.fork) return repo.owner.login;
+/**
+ * @param {any} repo
+ * @param {string} [token]
+ * @returns {Promise<{owner: string, name: string}>}
+ */
+async function getUpstreamInfo(repo, token) {
+  if (!repo.fork) return { owner: repo.owner.login, name: repo.name };
 
   const response = await githubFetch(
     `${GITHUB_API}/repos/${repo.full_name}`,
     token,
   );
-  if (!response.ok) return repo.owner.login;
+  if (!response.ok) return { owner: repo.owner.login, name: repo.name };
 
   const detail = await response.json();
-  return (
-    detail.source?.owner?.login ||
-    detail.parent?.owner?.login ||
-    repo.owner.login
-  );
+  const source = detail.source || detail.parent;
+  return {
+    owner: source?.owner?.login || repo.owner.login,
+    name: source?.name || repo.name,
+  };
 }
 
+/**
+ * @param {string} username
+ * @param {string} [token]
+ */
 async function fetchDisplayName(username, token) {
   const response = await githubFetch(
     `${GITHUB_API}/users/${username}`,
@@ -79,6 +126,7 @@ async function fetchDisplayName(username, token) {
   return user.name || user.login;
 }
 
+/** @param {string} username */
 async function fetchImageStats(username) {
   try {
     const url = `https://raw.githubusercontent.com/${username}/${username}/main/stats.json`;
@@ -91,6 +139,12 @@ async function fetchImageStats(username) {
   }
 }
 
+/**
+ * @param {string} owner
+ * @param {string} repoName
+ * @param {string} username
+ * @param {string} [token]
+ */
 async function fetchContributions(owner, repoName, username, token) {
   const url = `${GITHUB_API}/repos/${owner}/${repoName}/stats/contributors`;
 
@@ -119,8 +173,9 @@ async function fetchContributions(owner, repoName, username, token) {
     );
     if (!user) return { additions: 0, deletions: 0 };
 
-    const additions = user.weeks.reduce((sum, w) => sum + (w.a || 0), 0);
-    const deletions = user.weeks.reduce((sum, w) => sum + (w.d || 0), 0);
+    const weeks = user.weeks || [];
+    const additions = weeks.reduce((/** @type {number} */ sum, /** @type {any} */ w) => sum + (w.a || 0), 0);
+    const deletions = weeks.reduce((/** @type {number} */ sum, /** @type {any} */ w) => sum + (w.d || 0), 0);
     return { additions, deletions };
   }
 
@@ -129,10 +184,12 @@ async function fetchContributions(owner, repoName, username, token) {
 
 // ---- SVG rendering ----
 
+/** @param {number} num */
 function formatNumber(num) {
   return num.toLocaleString("en-US");
 }
 
+/** @param {string} str */
 function escapeHtml(str) {
   return String(str)
     .replace(/&/g, "&amp;")
@@ -141,6 +198,12 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
+/**
+ * @param {number} additions
+ * @param {number} deletions
+ * @param {string} displayName
+ * @param {Record<string, any>} [options]
+ */
 function renderContributionsCard(
   additions,
   deletions,
@@ -227,6 +290,7 @@ function renderContributionsCard(
 </svg>`.trim();
 }
 
+/** @param {string} message */
 function renderErrorCard(message) {
   return `
 <svg xmlns="http://www.w3.org/2000/svg" width="400" height="100" viewBox="0 0 400 100">
@@ -243,7 +307,7 @@ function renderErrorCard(message) {
 // ---- Vercel Handler ----
 
 // @ts-ignore
-export default async (req, res) => {
+export default async (/** @type {any} */ req, /** @type {any} */ res) => {
   const {
     username,
     cache_seconds = "86400",
@@ -263,6 +327,7 @@ export default async (req, res) => {
     return res.send(renderErrorCard("Missing ?username= parameter"));
   }
 
+  // @ts-ignore
   const token = process.env.PAT_1;
 
   try {
@@ -271,19 +336,21 @@ export default async (req, res) => {
     const excludeSet = new Set(
       (exclude_repo || "")
         .split(",")
-        .map((s) => s.trim().toLowerCase())
+        .map((/** @type {string} */ s) => s.trim().toLowerCase())
         .filter(Boolean),
     );
     const repos = allRepos.filter(
       (r) => !excludeSet.has(r.name.toLowerCase()),
     );
 
-    const resolvedRepos = await Promise.all(
-      repos.map(async (repo) => ({
-        owner: await getUpstreamOwner(repo, token),
-        name: repo.name,
-      })),
-    );
+    const resolvedRepos = [];
+    for (let i = 0; i < repos.length; i += BATCH_SIZE) {
+      const batch = repos.slice(i, i + BATCH_SIZE);
+      const results = await Promise.all(
+        batch.map(async (repo) => getUpstreamInfo(repo, token)),
+      );
+      resolvedRepos.push(...results);
+    }
 
     let totalAdditions = 0;
     let totalDeletions = 0;
@@ -331,6 +398,11 @@ export default async (req, res) => {
     return res.send(svg);
   } catch (err) {
     console.error("contributions error:", err);
+    if (err instanceof RateLimitError) {
+      // Rate limited: short cache to avoid hammering, but retry soon
+      res.setHeader("Cache-Control", "max-age=300, s-maxage=600, stale-while-revalidate=3600");
+      return res.send(renderErrorCard("GitHub API rate limit exceeded. Try again later."));
+    }
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     return res.send(renderErrorCard("Failed to fetch contribution data"));
   }
