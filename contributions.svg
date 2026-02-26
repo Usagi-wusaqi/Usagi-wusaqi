@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="200" viewBox="0 0 1200 200" fill="none" role="img">
+  <style>
+    .header { font: 600 48px 'Segoe UI', Ubuntu, Sans-Serif; fill: #2f80ed; }
+    @supports(-moz-appearance: auto) { .header { font-size: 41px; } }
+    .stat { font: 600 20px 'Segoe UI', Ubuntu, "Helvetica Neue", Sans-Serif; fill: #434d58; }
+    .bold { font: 700 36px 'Segoe UI', Ubuntu, "Helvetica Neue", Sans-Serif; }
+  </style>
+  <rect x="0.5" y="0.5" width="1199" height="199" rx="4.5" fill="#fffefe" stroke="#e4e2e2" stroke-width="1"/>
+  <text x="67" y="70" class="header">Code Contributions</text>
+  <g transform="translate(67, 120)">
+    <text x="0" y="0" class="stat">Additions</text>
+    <text x="0" y="36" class="stat bold" style="fill:#28a745">+24,755</text>
+  </g>
+  <g transform="translate(350, 120)">
+    <text x="0" y="0" class="stat">Deletions</text>
+    <text x="0" y="36" class="stat bold" style="fill:#d73a49">-12,049</text>
+  </g>
+  <g transform="translate(633, 120)">
+    <text x="0" y="0" class="stat">Net</text>
+    <text x="0" y="36" class="stat bold" style="fill:#28a745">+12,706</text>
+  </g>
+  <g transform="translate(916, 120)">
+    <text x="0" y="0" class="stat">Images</text>
+    <text x="0" y="36" class="stat bold" style="fill:#6f42c1">146</text>
+  </g>
+</svg>
