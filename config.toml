@@ -1,5 +1,5 @@
-# generate-stats.py 配置 + 统计数据
-# 除 [stats] 段由脚本自动更新外，其余均可手动编辑
+# generate-stats.py 配置
+# 除 author_identities 由脚本自动学习和更新外，其余均可手动编辑
 
 # 作者身份（Base64 编码的 JSON，由脚本自动学习和更新，勿手动修改）
 author_identities = "eyJpZGVudGl0aWVzIjogWyJVc2FnaS13dXNhcWkgPDIxODE4MDIzMzZAcXEuY29tPiIsICJ3dXNhcWkgPDIxODE4MDIzMzZAcXEuY29tPiIsICJ3dXNhcWkgPDIyMjE1MjI4MCtVc2FnaS13dXNhcWlAdXNlcnMubm9yZXBseS5naXRodWIuY29tPiJdfQ=="
@@ -98,14 +98,3 @@ progress_interval = 10
 include_images = true
 # 控制台分隔线宽度（字符数）
 separator_length = 60
-
-# ---- 以下由脚本自动更新，请勿手动修改 ----
-[stats]
-# 总新增行数
-total_additions = 26295
-# 总删除行数
-total_deletions = 13338
-# 总图片文件数
-total_images = 149
-# 最后更新时间（ISO 8601）
-last_updated = "2026-02-28T18:18:10+08:00"

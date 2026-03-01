@@ -5,7 +5,7 @@
 - 统计所有仓库的图片贡献（images 数量）
 - 智能缓存系统，避免重复分析已处理的 commits
 - 支持 Fork 仓库（直接克隆上游仓库获取完整历史）
-- 从模板生成 README.md，输出 config.toml 供 Vercel 卡片读取
+- 从模板生成 README.md，直接生成 SVG 卡片
 
 ## 数据源策略
 - Git log 优先：完整历史数据，准确可靠
@@ -1276,7 +1276,7 @@ def analyze_commits(
     ctx: RepoContext,
     *,
     include_images: bool = True,
-) -> None:
+) -> bool:
     """分析代码贡献并保存缓存
 
     数据获取策略：
@@ -1285,6 +1285,8 @@ def analyze_commits(
     - API 仅在 git log 失败时兜底（有分页限制）
 
     结果写入缓存文件，由 aggregate_stats_from_cache() 汇总。
+
+    返回: 缓存是否有变更（新 commit / 过期清理）
     """
     print_color("    📊 开始分析commits...", Colors.YELLOW)
 
@@ -1307,18 +1309,20 @@ def analyze_commits(
 
     if not all_commits:
         print_color("    ℹ️  未找到commits", Colors.NC)
-        return
+        return False
 
     total_commits = len(all_commits)
     print_color(f"    📊 最终使用 {total_commits} 个commits", Colors.NC)
 
     # 清理过期缓存（消失的 SHA 删除）
+    old_count = len(cache_data.get(ctx.repo_name, []))
     cache_data = clean_stale_cache(
         cache_data,
         all_commits,
         ctx.repo_name,
         is_api_fallback=is_api_fallback,
     )
+    stale_cleaned = len(cache_data.get(ctx.repo_name, [])) != old_count
 
     # 处理所有 commits（不变的跳过，新的/旧格式的重新获取）
     total_additions, total_deletions, total_images, cache_hits, cache_misses = (
@@ -1342,6 +1346,8 @@ def analyze_commits(
 
     # 保存缓存（累加写入文件头 _metadata）
     save_cache(ctx.repo_name, cache_data)
+
+    return cache_misses > 0 or stale_cleaned
 
 
 def _process_all_commits(
@@ -1453,7 +1459,7 @@ def _print_cache_stats(cache_hits: int, cache_misses: int, total_commits: int) -
 # ============================================================================
 
 
-def process_repos(repos: list[RepoInfo], *, include_images: bool = True) -> None:
+def process_repos(repos: list[RepoInfo], *, include_images: bool = True) -> bool:
     """处理所有仓库：克隆 → 分析 → 保存缓存
 
     最终统计由 aggregate_stats_from_cache() 从缓存文件汇总，
@@ -1462,9 +1468,12 @@ def process_repos(repos: list[RepoInfo], *, include_images: bool = True) -> None
     Args:
         repos: 仓库列表
         include_images: 是否统计图片贡献
+
+    返回: 是否有任何仓库的缓存发生变更
     """
     print_separator("开始处理仓库...")
 
+    any_changed = False
     temp_dir = Path.cwd() / "temp_repos"
     temp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1533,7 +1542,8 @@ def process_repos(repos: list[RepoInfo], *, include_images: bool = True) -> None
             )
 
             # 分析代码贡献（结果写入缓存文件）
-            analyze_commits(ctx, include_images=include_images)
+            if analyze_commits(ctx, include_images=include_images):
+                any_changed = True
     finally:
         print_color("\n  🧹 清理临时文件...", Colors.YELLOW)
         if temp_dir.exists():
@@ -1541,6 +1551,8 @@ def process_repos(repos: list[RepoInfo], *, include_images: bool = True) -> None
                 shutil.rmtree(temp_dir)
             except OSError as e:
                 print_color(f"  ⚠️  清理临时目录失败: {e}", Colors.YELLOW)
+
+    return any_changed
 
 
 # ============================================================================
@@ -1656,49 +1668,6 @@ def print_update_summary(stats: StatsData) -> None:
     print_color(f"   🕒 最新 commit: {latest_ts}", Colors.NC)
     print_color(f"   👤 远端用户名: {ORIGIN_USERNAME}", Colors.NC)
     print_color(f"   👑 上游用户名: {UPSTREAM_USERNAME}", Colors.NC)
-
-
-def save_stats_json(stats: StatsData) -> None:
-    """将统计数据写入 config.toml 的 [stats] 段
-
-    - 正则原地替换，保留注释和格式
-    - [stats] 段每次运行时更新
-    - last_updated 使用最新 commit 的时间戳（而非脚本运行时间），
-      这样没有新代码时文件内容不变 → git 无 diff → 不产生空提交。
-    """
-    latest_ts = stats.get("latest_commit_timestamp", "")
-    if latest_ts:
-        last_updated = str(latest_ts)
-    else:
-        tz_hours = cfg.get("behavior", {}).get("timezone_offset_hours", 8)
-        last_updated = datetime.now(tz=timezone(timedelta(hours=tz_hours))).isoformat()
-
-    updates = {
-        "total_additions": stats.get("total_additions", 0),
-        "total_deletions": stats.get("total_deletions", 0),
-        "total_images": stats.get("total_images", 0),
-        "last_updated": last_updated,
-    }
-
-    try:
-        content = CONFIG_TOML_PATH.read_text(encoding="utf-8")
-        content = _update_toml_values(content, updates)
-        CONFIG_TOML_PATH.write_text(content, encoding="utf-8", newline="\n")
-        print_color(f"✅ config.toml 已更新: {CONFIG_TOML_PATH}", Colors.GREEN)
-    except OSError as e:
-        print_color(f"⚠️  保存 config.toml 失败: {e}", Colors.RED)
-
-
-def _read_current_stats() -> StatsData | None:
-    """从 cfg 的 stats 段读取当前统计数字（启动时已加载）"""
-    stats_section = cfg.get("stats", {})
-    if "total_images" in stats_section:
-        return {
-            "total_additions": int(stats_section.get("total_additions", 0)),
-            "total_deletions": int(stats_section.get("total_deletions", 0)),
-            "total_images": int(stats_section["total_images"]),
-        }
-    return None
 
 
 def update_readme(stats: StatsData, *, mode: str = "actions") -> bool:
@@ -1854,10 +1823,8 @@ def generate_contributions_svg(
 </svg>"""
 
 
-def save_contributions_svg(stats: StatsData) -> bool:
-    """生成并保存贡献统计 SVG 卡片"""
-    display_name = ORIGIN_USERNAME
-    svg_content = generate_contributions_svg(stats, display_name)
+def save_contributions_svg(svg_content: str) -> bool:
+    """保存贡献统计 SVG 卡片到文件"""
     try:
         with SVG_CARD_PATH.open("w", encoding="utf-8", newline="\n") as f:
             f.write(svg_content)
@@ -1888,7 +1855,7 @@ def main() -> int:
         "--mode",
         choices=["actions", "api"],
         default="actions",
-        help="运行模式: actions=生成本地SVG+更新README, api=仅config.toml供Vercel读取+更新README (默认: actions)",
+        help="运行模式: actions=生成本地SVG+更新README, api=仅更新README (默认: actions)",
     )
     args = parser.parse_args()
 
@@ -1936,10 +1903,14 @@ def main() -> int:
 
     # 处理仓库（克隆 → 分析 → 保存缓存）
     try:
-        process_repos(repos, include_images=include_images)
+        any_changed = process_repos(repos, include_images=include_images)
     except RateLimitError as e:
         print_color(f"❌ {e}", Colors.RED)
         return 1
+
+    if not any_changed:
+        print_separator("✅ 脚本执行完成（无变更）")
+        return 0
 
     # 从所有缓存文件的 _metadata 汇总统计
     stats = aggregate_stats_from_cache()
@@ -1953,26 +1924,15 @@ def main() -> int:
     print_color(f"  🖼️  总 images: {imgs:,}", Colors.GREEN)
     print_separator()
 
-    # 先读旧数据做变更检测（必须在 save_stats_json 之前）
-    old_stats = _read_current_stats()
-    stats_changed = old_stats is None or any(
-        old_stats.get(k) != stats.get(k, 0)
-        for k in ("total_additions", "total_deletions", "total_images")
-    )
-
-    if not stats_changed:
-        print_color("ℹ️  统计数据未变化，跳过全部更新", Colors.YELLOW)
-    else:
-        # 写入 config.toml（last_updated = 最新 commit 时间戳）
-        save_stats_json(stats)
-
-        # Actions 模式：从 stats 数据生成本地 SVG 卡片
-        if args.mode == "actions" and not save_contributions_svg(stats):
+    # Actions 模式：生成并保存 SVG 卡片
+    if args.mode == "actions":
+        svg_content = generate_contributions_svg(stats, ORIGIN_USERNAME)
+        if not save_contributions_svg(svg_content):
             return 1
 
-        # 更新 README.md
-        if not update_readme(stats, mode=args.mode):
-            return 1
+    # 更新 README.md
+    if not update_readme(stats, mode=args.mode):
+        return 1
 
     print_separator("✅ 脚本执行完成！")
     return 0
