@@ -1520,3 +1520,147 @@ def _print_cache_stats(cache_hits: int, cache_misses: int, total_commits: int) -
         print_color(f"       - 缓存命中率: {cache_hit_rate:.1f}%", Colors.NC)
 
 
+# ============================================================================
+# 仓库处理
+# ============================================================================
+
+
+def _repo_owner_from_url(repo_url: str) -> str | None:
+    """从 GitHub 仓库 URL 中提取 owner"""
+    try:
+        path = urllib.parse.urlparse(repo_url).path.strip("/")
+    except ValueError:
+        return None
+
+    parts = path.split("/")
+    if len(parts) < 2:
+        return None
+    return parts[0]
+
+
+def cleanup_stale_cache_files(active_repo_names: set[str]) -> bool:
+    """删除当前仓库列表中已经不存在的仓库缓存文件"""
+    if not CACHE_DIR.exists() or not active_repo_names:
+        return False
+
+    changed = False
+    for cache_file in sorted(CACHE_DIR.glob("*.json")):
+        if cache_file.stem in active_repo_names:
+            continue
+
+        try:
+            cache_file.unlink()
+            changed = True
+            print_color(f"🧹 已删除不存在仓库的缓存: {cache_file}", Colors.YELLOW)
+        except OSError as e:
+            print_color(f"⚠️  删除陈旧缓存失败: {e}", Colors.YELLOW)
+
+    return changed
+
+
+def process_repos(repos: list[RepoInfo]) -> bool:
+    """处理所有仓库：克隆 → 分析 → 保存缓存
+
+    最终统计由 aggregate_stats_from_cache() 从缓存文件汇总，
+    本函数仅负责处理和保存每个仓库的缓存。
+
+    返回: 是否有任何仓库的缓存发生变更
+    """
+    print_separator("开始处理仓库...")
+
+    any_changed = False
+    active_repo_names: set[str] = set()
+    processed_targets: set[str] = set()
+    temp_dir = Path.cwd() / "temp_repos"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        for repo in repos:
+            repo_name = repo.get("name")
+            repo_url = repo.get("html_url")
+            is_fork = repo.get("fork", False)
+
+            if not repo_name or not repo_url:
+                continue
+
+            print_separator(f"📦 仓库: {repo_name}", Colors.YELLOW)
+            print_color("  URL: " + str(repo_url), Colors.NC)
+            print_color(
+                "  类型: " + ("Fork 仓库" if is_fork else "原创仓库"), Colors.NC
+            )
+
+            # 确定要克隆的仓库（Fork 仓库直接克隆上游）
+            upstream_owner, upstream_name = get_upstream_repo(repo)
+            if upstream_owner and upstream_name:
+                clone_owner = upstream_owner
+                target_repo_name = upstream_name
+                clone_url = (
+                    f"https://{TOKEN}@github.com/{upstream_owner}/{upstream_name}.git"
+                )
+                print_color(
+                    f"  📡 直接克隆上游仓库: {upstream_owner}/{upstream_name}",
+                    Colors.NC,
+                )
+            else:
+                clone_owner = _repo_owner_from_url(str(repo_url)) or ORIGIN_USERNAME
+                target_repo_name = str(repo_name)
+                clone_url = str(repo_url).replace(
+                    "https://github.com/",
+                    f"https://{TOKEN}@github.com/",
+                )
+
+            active_repo_names.add(target_repo_name)
+            target_key = f"{clone_owner}/{target_repo_name}".lower()
+            if target_key in processed_targets:
+                print_color(
+                    f"  ℹ️  已处理同一目标仓库，跳过重复项: {clone_owner}/{target_repo_name}",
+                    Colors.NC,
+                )
+                continue
+
+            # 克隆仓库到临时目录
+            repo_path = temp_dir / target_repo_name
+            if repo_path.exists():
+                print_color("  🔄 更新本地仓库...", Colors.YELLOW)
+                _, returncode = run_command(
+                    "git fetch --unshallow origin",
+                    cwd=str(repo_path),
+                )
+                if returncode != 0:
+                    run_command("git fetch origin", cwd=str(repo_path))
+            else:
+                print_color("  📥 克隆仓库...", Colors.YELLOW)
+                _, returncode = run_command(
+                    ["git", "clone", "--no-single-branch", clone_url, target_repo_name],
+                    cwd=str(temp_dir),
+                )
+                if returncode != 0 or not repo_path.exists():
+                    print_color("  ⚠️  克隆仓库失败，跳过", Colors.YELLOW)
+                    continue
+
+            processed_targets.add(target_key)
+
+            ctx = RepoContext(
+                repo_path=str(repo_path),
+                owner=clone_owner,
+                repo_name=target_repo_name,
+                username=ORIGIN_USERNAME,
+            )
+
+            # 分析代码贡献（结果写入缓存文件）
+            if analyze_commits(ctx):
+                any_changed = True
+    finally:
+        print_color("\n  🧹 清理临时文件...", Colors.YELLOW)
+        if temp_dir.exists():
+            try:
+                shutil.rmtree(temp_dir)
+            except OSError as e:
+                print_color(f"  ⚠️  清理临时目录失败: {e}", Colors.YELLOW)
+
+    if active_repo_names and cleanup_stale_cache_files(active_repo_names):
+        any_changed = True
+
+    return any_changed
+
+
