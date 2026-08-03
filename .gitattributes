@@ -1,0 +1,21 @@
+# 设置所有文本文件使用 LF 行尾符
+* text=auto eol=lf
+
+# 明确指定各种文件类型使用 LF
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.txt text eol=lf
+*.sh text eol=lf
+
+# 二进制文件不进行行尾符转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg binary
+*.webp binary
+*.bmp binary
