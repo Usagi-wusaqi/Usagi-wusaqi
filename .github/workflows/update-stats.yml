@@ -1,0 +1,218 @@
+name: 更新 README 统计数据
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 每天 23:59 北京时间 (UTC+8 → 15:59 UTC)
+    - cron: '59 15 * * *'
+
+permissions:
+  contents: write
+
+jobs:
+  update-stats:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # 检出代码仓库
+      - name: 检出代码仓库
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # 获取完整历史以便更好的 git log 分析
+
+      # 设置 Python
+      - name: 设置 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # 确定目标用户
+      - name: 确定目标用户
+        id: determine-users
+        run: |
+          echo "🔍 正在确定统计目标..."
+
+          # 通过查询 GitHub API 检查是否为 Fork 仓库
+          REPO_INFO=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}")
+
+          IS_FORK=$(echo "$REPO_INFO" | jq -r '.fork // false')
+          REPO_OWNER_ID=$(echo "$REPO_INFO" | jq -r '.owner.id // empty')
+
+          if [ "$IS_FORK" = "true" ]; then
+            # 这是 Fork 仓库
+            ORIGIN_USERNAME="${{ github.repository_owner }}"
+            UPSTREAM_USERNAME=$(echo "$REPO_INFO" | jq -r '.parent.owner.login // .source.owner.login // empty')
+
+            if [ -n "$UPSTREAM_USERNAME" ] && [ "$UPSTREAM_USERNAME" != "null" ]; then
+              echo "🍴 检测到 Fork 仓库"
+              echo "👤 远端用户名: $ORIGIN_USERNAME"
+              echo "👑 上游用户名: $UPSTREAM_USERNAME"
+            else
+              UPSTREAM_USERNAME="$ORIGIN_USERNAME"
+              echo "🍴 Fork 仓库但无法获取上游信息"
+              echo "👤 远端用户名: $ORIGIN_USERNAME"
+              echo "👑 上游用户名: $UPSTREAM_USERNAME"
+            fi
+          else
+            # 这是原始仓库
+            ORIGIN_USERNAME="${{ github.repository_owner }}"
+            UPSTREAM_USERNAME="${{ github.repository_owner }}"
+            echo "📦 检测到原始仓库"
+            echo "👤 远端用户名: $ORIGIN_USERNAME"
+            echo "👑 上游用户名: $UPSTREAM_USERNAME"
+          fi
+
+          if [ -z "$REPO_OWNER_ID" ] || [ "$REPO_OWNER_ID" = "null" ]; then
+            echo "❌ 错误: 无法获取远端用户 ID"
+            exit 1
+          fi
+
+          echo "ORIGIN_USERNAME=$ORIGIN_USERNAME" >> $GITHUB_OUTPUT
+          echo "UPSTREAM_USERNAME=$UPSTREAM_USERNAME" >> $GITHUB_OUTPUT
+          echo "REPO_OWNER_ID=$REPO_OWNER_ID" >> $GITHUB_OUTPUT
+          echo "✅ 目标用户已确定"
+
+      # 生成统计数据
+      - name: 生成统计数据
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ORIGIN_USERNAME: ${{ steps.determine-users.outputs.ORIGIN_USERNAME }}
+          UPSTREAM_USERNAME: ${{ steps.determine-users.outputs.UPSTREAM_USERNAME }}
+        run: |
+          echo "🚀 开始生成统计数据..."
+          echo "👤 目标用户: $ORIGIN_USERNAME"
+          echo "📊 仓库: ${{ github.repository }}"
+
+          # 验证环境变量
+          if [ -z "$GH_TOKEN" ]; then
+            echo "❌ 错误: GH_TOKEN 未设置"
+            exit 1
+          fi
+
+          if [ -z "$ORIGIN_USERNAME" ]; then
+            echo "❌ 错误: ORIGIN_USERNAME 未设置"
+            exit 1
+          fi
+
+          # 运行脚本，带超时和错误处理
+          timeout 25m python3 scripts/generate-stats.py --mode actions || {
+            echo "❌ 统计生成失败或超时"
+            echo "📋 检查部分结果..."
+            if [ -f "README.md" ]; then
+              echo "✅ README.md 存在，检查更改..."
+              git diff --name-only
+            fi
+            exit 1
+          }
+
+          echo "✅ 统计数据生成成功"
+
+      # 检查是否有更改
+      - name: 检查是否有更改
+        id: check-changes
+        run: |
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "changes=false" >> $GITHUB_OUTPUT
+            echo "ℹ️  未检测到更改"
+          else
+            echo "changes=true" >> $GITHUB_OUTPUT
+            echo "📝 检测到更改:"
+            git diff --name-only
+          fi
+
+      # 检查上一提交是否为可压缩的统计提交
+      - name: 检查上一提交是否需要压缩
+        id: detect-amend
+        if: steps.check-changes.outputs.changes == 'true'
+        env:
+          ORIGIN_USERNAME: ${{ steps.determine-users.outputs.ORIGIN_USERNAME }}
+          REPO_OWNER_ID: ${{ steps.determine-users.outputs.REPO_OWNER_ID }}
+        run: |
+          LAST_SUBJECT="$(git log -1 --pretty=%s)"
+          LAST_AUTHOR_NAME="$(git log -1 --pretty=%an)"
+          LAST_AUTHOR_EMAIL="$(git log -1 --pretty=%ae)"
+          echo "📌 上一提交标题: $LAST_SUBJECT"
+          echo "📌 上一提交作者: $LAST_AUTHOR_NAME <$LAST_AUTHOR_EMAIL>"
+
+          IS_STATS_COMMIT=false
+          if [ "$LAST_SUBJECT" = "📊 更新统计（自动）" ]; then
+            IS_STATS_COMMIT=true
+          fi
+
+          EXPECTED_AUTHOR_NAME="$ORIGIN_USERNAME"
+          EXPECTED_AUTHOR_EMAIL="${REPO_OWNER_ID}+${ORIGIN_USERNAME}@users.noreply.github.com"
+
+          ACTION_IS_AUTHOR=false
+          if [ "$LAST_AUTHOR_NAME" = "$EXPECTED_AUTHOR_NAME" ] && [ "$LAST_AUTHOR_EMAIL" = "$EXPECTED_AUTHOR_EMAIL" ]; then
+            ACTION_IS_AUTHOR=true
+          fi
+
+          if [ "$IS_STATS_COMMIT" = "true" ] && [ "$ACTION_IS_AUTHOR" = "true" ]; then
+            echo "should_amend=true" >> $GITHUB_OUTPUT
+            echo "✅ 上一提交由统计工作流生成，本次将压缩进上一提交"
+          else
+            echo "should_amend=false" >> $GITHUB_OUTPUT
+            echo "ℹ️  上一提交不是可压缩的统计提交，本次将创建新提交"
+          fi
+
+      # 提交并推送
+      - name: 提交并推送
+        if: steps.check-changes.outputs.changes == 'true'
+        env:
+          ORIGIN_USERNAME: ${{ steps.determine-users.outputs.ORIGIN_USERNAME }}
+          REPO_OWNER_ID: ${{ steps.determine-users.outputs.REPO_OWNER_ID }}
+        run: |
+          echo "📤 正在提交和推送更改..."
+
+          # 配置 git
+          BOT_NAME="$ORIGIN_USERNAME"
+          BOT_EMAIL="${REPO_OWNER_ID}+${ORIGIN_USERNAME}@users.noreply.github.com"
+          BOT_AUTHOR="$BOT_NAME <$BOT_EMAIL>"
+          git config --global user.name "$BOT_NAME"
+          git config --global user.email "$BOT_EMAIL"
+
+          # 添加更改
+          git add README.md config.toml contributions.svg scripts/stats_cache/
+
+          # 根据上一提交决定是新建提交还是压缩进上一提交
+          if [ "${{ steps.detect-amend.outputs.should_amend }}" = "true" ]; then
+            echo "🧩 检测到连续统计提交，压缩进上一提交..."
+
+            git commit --amend \
+              --author="$BOT_AUTHOR" \
+              -m "📊 更新统计（自动）"
+
+            if git push --force-with-lease origin HEAD:${{ github.ref_name }}; then
+              echo "✅ 压缩后的提交推送成功"
+            else
+              echo "❌ 压缩后的提交推送失败"
+              exit 1
+            fi
+          else
+            echo "🆕 创建新的统计提交..."
+
+            git commit \
+              --author="$BOT_AUTHOR" \
+              -m "📊 更新统计（自动）"
+
+            if git push origin HEAD:${{ github.ref_name }}; then
+              echo "✅ 更改推送成功"
+            else
+              echo "❌ 推送更改失败"
+              exit 1
+            fi
+          fi
+
+      # 摘要
+      - name: 摘要
+        if: always()
+        run: |
+          echo "📋 工作流摘要:"
+          echo "- 仓库: ${{ github.repository }}"
+          echo "- 触发方式: ${{ github.event_name }}"
+          echo "- 远端用户名: ${{ steps.determine-users.outputs.ORIGIN_USERNAME }}"
+          echo "- 上游用户名: ${{ steps.determine-users.outputs.UPSTREAM_USERNAME }}"
+          echo "- 是否有更改: ${{ steps.check-changes.outputs.changes || 'unknown' }}"
+          echo "- 是否压缩进上一提交: ${{ steps.detect-amend.outputs.should_amend || 'false' }}"
