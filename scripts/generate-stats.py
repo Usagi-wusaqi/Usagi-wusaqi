@@ -521,3 +521,256 @@ def sort_and_reindex_commits(cache_data: CacheData) -> CacheData:
         ]
 
     return sorted_cache_data
+
+
+# ============================================================================
+# 缓存管理
+# ============================================================================
+
+
+def load_cache(repo_name: str) -> CacheData:
+    """加载指定仓库的缓存数据"""
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_file = _cache_file_for_repo(repo_name)
+
+    try:
+        with cache_file.open(encoding="utf-8") as f:
+            cache_data = json.load(f)
+            print_color(f"💾 已加载缓存: {cache_file}", Colors.GREEN)
+
+            metadata = cache_data.get("_metadata", {})
+            print_color(
+                f"   缓存包含 {metadata.get('total_commits', 0)} 个commits",
+                Colors.NC,
+            )
+            data = cache_data.get("data", {})
+            if isinstance(data, dict):
+                normalized = normalize_cache_data(cast("CacheData", data))
+                return normalized
+            return {}
+    except FileNotFoundError:
+        print_color(f"⚠️  加载缓存失败: {cache_file} 不存在", Colors.YELLOW)
+        return {}
+    except (OSError, json.JSONDecodeError) as e:
+        print_color(f"⚠️  加载缓存失败: {e}", Colors.YELLOW)
+        return {}
+
+
+def _serialize_cache(data: dict[str, dict[str, int | str] | CacheData]) -> str:
+    """将缓存数据序列化为紧凑 JSON 格式
+
+    格式：metadata 和 data 键使用 2 空格缩进，
+    每条 commit 记录独占一行（6 空格缩进）。
+    """
+    lines = ["{"]
+
+    metadata = json.dumps(data["_metadata"], ensure_ascii=False)
+    lines.append(f'  "_metadata": {metadata},')
+
+    repo_data = cast(CacheData, data["data"])
+    repo_names = list(repo_data.keys())
+    for ri, repo_name in enumerate(repo_names):
+        commits = repo_data[repo_name]
+        if ri == 0:
+            lines.append(f'  "data": {{"{repo_name}": [')
+        else:
+            lines.append(f'    ,"{repo_name}": [')
+        for ci, commit in enumerate(commits):
+            entry = json.dumps(commit, ensure_ascii=False)
+            prefix = "" if ci == 0 else ","
+            lines.append(f"      {prefix}{entry}")
+        lines.append("    ]")
+
+    if not repo_names:
+        lines.append('  "data": {}')
+    else:
+        lines.append("  }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def save_cache(repo_name: str, cache_data: CacheData) -> bool:
+    """保存指定仓库的缓存数据，并返回文件内容是否变化
+
+    功能：
+    - 按时间戳排序 commits（从旧到新）
+    - 重新编号 commit index（从 1 开始）
+    - 统计总 commits 数和总图片数
+    - 保存为带 metadata 的 JSON 格式
+
+    参数：
+    - repo_name: 仓库名称
+    - cache_data: 缓存数据字典
+
+    JSON 输出格式：
+    {
+      "_metadata": {
+        "total_commits": int,               // 总 commit 数
+        "total_additions": int,             // 总新增行数
+        "total_deletions": int,             // 总删除行数
+        "total_images": int,                // 总图片数
+        "latest_commit_timestamp": str      // 最新 commit 的时间戳
+      },
+      "data": { ... }                       // commit 数据
+    }
+    """
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_file = _cache_file_for_repo(repo_name)
+
+    try:
+        # 排序和重新编号
+        sorted_cache_data = sort_and_reindex_commits(cache_data)
+
+        # 计算统计信息
+        total_commits, total_additions, total_deletions, total_images = (
+            calculate_cache_statistics(sorted_cache_data)
+        )
+
+        # 取最新 commit 的时间戳（时区感知比较，排序后不一定是最后一条）
+        latest_dt = datetime.min.replace(tzinfo=timezone.utc)
+        latest_ts = ""
+        for commits in sorted_cache_data.values():
+            for c in commits:
+                ts = str(c.get("timestamp", ""))
+                dt = _parse_iso_timestamp(ts)
+                if dt > latest_dt:
+                    latest_dt = dt
+                    latest_ts = ts
+
+        metadata: dict[str, int | str] = {
+            "total_commits": total_commits,
+            "total_additions": total_additions,
+            "total_deletions": total_deletions,
+            "total_images": total_images,
+            "latest_commit_timestamp": latest_ts,
+        }
+        cache_data_with_metadata: dict[str, dict[str, int | str] | CacheData] = {
+            "_metadata": metadata,
+            "data": sorted_cache_data,
+        }
+
+        serialized = _serialize_cache(cache_data_with_metadata)
+        old_content = ""
+        if cache_file.exists():
+            old_content = cache_file.read_text(encoding="utf-8")
+        if old_content == serialized:
+            print_color(f"✅ 缓存无变化: {cache_file}", Colors.GREEN)
+            return False
+
+        with cache_file.open("w", encoding="utf-8", newline="\n") as f:
+            f.write(serialized)
+
+        cache_data.clear()
+        cache_data.update(sorted_cache_data)
+
+        print_color(f"✅ 缓存已保存: {cache_file}", Colors.GREEN)
+        print_color(f"   commits: {total_commits}", Colors.NC)
+        print_color(
+            f"   additions: {total_additions}  deletions: {total_deletions}  images: {total_images}",
+            Colors.NC,
+        )
+    except (OSError, TypeError, ValueError) as e:
+        print_color(f"❌ 保存缓存失败: {e}", Colors.RED)
+        return False
+    else:
+        return True
+
+
+def aggregate_stats_from_cache() -> StatsData:
+    """从所有缓存文件的 _metadata 汇总统计数据
+
+    遍历 CACHE_DIR 下每个仓库的 JSON 缓存文件，
+    读取各自 _metadata 中的 total_commits / total_additions / total_deletions /
+    total_images / latest_commit_timestamp，累加数值并取最大时间戳后返回全局统计。
+    """
+    total_commits = 0
+    total_additions = 0
+    total_deletions = 0
+    total_images = 0
+    latest_dt = datetime.min.replace(tzinfo=timezone.utc)
+    latest_ts = ""
+
+    if not CACHE_DIR.exists():
+        return {
+            "total_commits": 0,
+            "total_additions": 0,
+            "total_deletions": 0,
+            "total_images": 0,
+            "latest_commit_timestamp": "",
+        }
+
+    latest_dt = datetime.min.replace(tzinfo=timezone.utc)
+    latest_ts = ""
+
+    for cache_file in sorted(CACHE_DIR.glob("*.json")):
+        try:
+            with cache_file.open(encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                continue
+            repo_data = data.get("data", {})
+            if not isinstance(repo_data, dict) or cache_file.stem not in repo_data:
+                continue
+            metadata = data.get("_metadata", {})
+            if not isinstance(metadata, dict):
+                continue
+            meta: dict[str, int | str] = cast("dict[str, int | str]", metadata)
+            commits = meta.get("total_commits", 0)
+            a = meta.get("total_additions", 0)
+            d = meta.get("total_deletions", 0)
+            i = meta.get("total_images", 0)
+            total_commits += commits if isinstance(commits, int) else 0
+            total_additions += a if isinstance(a, int) else 0
+            total_deletions += d if isinstance(d, int) else 0
+            total_images += i if isinstance(i, int) else 0
+            ts = str(meta.get("latest_commit_timestamp", ""))
+            dt = _parse_iso_timestamp(ts)
+            if dt > latest_dt:
+                latest_dt = dt
+                latest_ts = ts
+        except (OSError, json.JSONDecodeError):
+            continue
+
+    return {
+        "total_commits": total_commits,
+        "total_additions": total_additions,
+        "total_deletions": total_deletions,
+        "total_images": total_images,
+        "latest_commit_timestamp": latest_ts,
+    }
+
+
+def extract_url_from_cache_item(item: CommitData) -> str:
+    """从缓存项中提取 commit URL"""
+    url = item.get("url", "")
+    return url if isinstance(url, str) else ""
+
+
+def normalize_cache_data(cache_data: CacheData) -> CacheData:
+    """标准化缓存数据：统一字段顺序并按 commit URL 去重"""
+    normalized_cache: CacheData = {}
+
+    for repo_name, items in cache_data.items():
+        seen_urls: set[str] = set()
+        normalized_items: list[CommitData] = []
+        duplicate_count = 0
+
+        for item in items:
+            item_copy = dict(item)
+            url = extract_url_from_cache_item(item_copy)
+            if url:
+                if url in seen_urls:
+                    duplicate_count += 1
+                    continue
+                seen_urls.add(url)
+
+            normalized_items.append(_order_cache_item(item_copy))
+
+        if duplicate_count > 0:
+            print_color(
+                f"    🧹 已按 commit URL 去重缓存: 删除 {duplicate_count} 条重复数据",
+                Colors.YELLOW,
+            )
+
+        normalized_cache[repo_name] = normalized_items
+
