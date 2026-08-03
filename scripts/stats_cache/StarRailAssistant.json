@@ -1,0 +1,37 @@
+{
+  "_metadata": {"total_commits": 31, "total_additions": 1536, "total_deletions": 776, "total_images": 2, "latest_commit_timestamp": "2026-04-04T23:05:59+08:00"},
+  "data": {"StarRailAssistant": [
+      {"timestamp": "2025-12-22T16:30:53+08:00", "index": 1, "additions": 8, "deletions": 0, "images": 1, "url": "https://github.com/Shasnow/StarRailAssistant/commit/ad49874652756f8b97cbb9b11f152a19990929a9"}
+      ,{"timestamp": "2026-01-13T22:41:44+08:00", "index": 2, "additions": 51, "deletions": 10, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/5f13602931643fad8931b4764179995c38f16547"}
+      ,{"timestamp": "2026-01-13T23:42:06+08:00", "index": 3, "additions": 126, "deletions": 11, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/1ec022ba0b70e466239f93f47a5e59a03528a681"}
+      ,{"timestamp": "2026-01-13T23:54:54+08:00", "index": 4, "additions": 12, "deletions": 0, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/4ab5d5fef5bc4f1d8f27a4b07543807bdd477461"}
+      ,{"timestamp": "2026-01-25T00:13:57+08:00", "index": 5, "additions": 4, "deletions": 1, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/09d0ba602f31e2f4d054698e731a450324134d14"}
+      ,{"timestamp": "2026-01-25T01:01:36+08:00", "index": 6, "additions": 13, "deletions": 2, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/d9bfda88b8b61f1493d629d8a988589a833a49c7"}
+      ,{"timestamp": "2026-01-25T02:36:13+08:00", "index": 7, "additions": 28, "deletions": 12, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/4997138644f26f230b91a1570c2ceb990b74e76c"}
+      ,{"timestamp": "2026-01-25T02:48:14+08:00", "index": 8, "additions": 67, "deletions": 17, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/243a67189ad574132426561a223a992af9d2c095"}
+      ,{"timestamp": "2026-01-25T03:26:16+08:00", "index": 9, "additions": 21, "deletions": 1, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/6f3c35014a554ebc17618182562fea0c7224d7ce"}
+      ,{"timestamp": "2026-01-25T03:26:42+08:00", "index": 10, "additions": 18, "deletions": 2, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/0b7f8b553cf5891f355228054f18a8bef09c5f4f"}
+      ,{"timestamp": "2026-01-31T02:06:04+08:00", "index": 11, "additions": 89, "deletions": 37, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/38de490c6aeb475466a8185675e810dfdca5aa78"}
+      ,{"timestamp": "2026-01-31T02:13:41+08:00", "index": 12, "additions": 7, "deletions": 3, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/1717cdcca5cc4a0bbe41523b806ac885d8691d2e"}
+      ,{"timestamp": "2026-01-31T09:05:51+08:00", "index": 13, "additions": 82, "deletions": 14, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/2bee1fdd4b2ea3510bcd3446d3b57b7a9e1228d5"}
+      ,{"timestamp": "2026-01-31T10:57:30+08:00", "index": 14, "additions": 9, "deletions": 3, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/10910e5c5b83c2d382da72266a2d55d55ac1076f"}
+      ,{"timestamp": "2026-02-17T23:35:44+08:00", "index": 15, "additions": 20, "deletions": 3, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/5e02da1ea63d6f90323fc2258a3091050d837fd1"}
+      ,{"timestamp": "2026-02-17T23:36:07+08:00", "index": 16, "additions": 36, "deletions": 7, "images": 1, "url": "https://github.com/Shasnow/StarRailAssistant/commit/4a168c5bba982924f8f4f329005e35a4391dc5f6"}
+      ,{"timestamp": "2026-02-17T23:53:33+08:00", "index": 17, "additions": 6, "deletions": 1, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/855d6f1cc67f1c61a2451b64dfa42e9ed80f3fbc"}
+      ,{"timestamp": "2026-03-07T14:06:08+08:00", "index": 18, "additions": 22, "deletions": 0, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/cb94a92b8c1d1e999e39542a190b48d0adcf68d1"}
+      ,{"timestamp": "2026-03-07T14:07:58+08:00", "index": 19, "additions": 28, "deletions": 39, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/43b9b70322cf5b2d3a9bc186dd39aa705f4c34ca"}
+      ,{"timestamp": "2026-03-07T14:08:17+08:00", "index": 20, "additions": 3, "deletions": 6, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/a2d01eda508b4879e8f55dd38c01b5ae2e81c955"}
+      ,{"timestamp": "2026-03-07T14:55:12+08:00", "index": 21, "additions": 13, "deletions": 3, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/ca501732ead01fc3987fde64463b8e21ca70bf35"}
+      ,{"timestamp": "2026-04-04T18:04:02+08:00", "index": 22, "additions": 266, "deletions": 36, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/d0b18392a71dfe6ea0ab89ba4289b8a040fd9f63"}
+      ,{"timestamp": "2026-04-04T18:26:33+08:00", "index": 23, "additions": 120, "deletions": 10, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/1e8e16b933b67b30cb2e26f7507e4318ae52b6b1"}
+      ,{"timestamp": "2026-04-04T20:51:04+08:00", "index": 24, "additions": 125, "deletions": 25, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/5b5b64a1dc0e2d83efb6692bb5fc8fa3a77382e8"}
+      ,{"timestamp": "2026-04-04T20:52:06+08:00", "index": 25, "additions": 87, "deletions": 36, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/154aa6abd5e42578bd44ac49123e3e9e350576ff"}
+      ,{"timestamp": "2026-04-04T21:07:09+08:00", "index": 26, "additions": 72, "deletions": 5, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/97c56af95cf55b40f0a9d1daaccdf819a9243915"}
+      ,{"timestamp": "2026-04-04T21:33:11+08:00", "index": 27, "additions": 82, "deletions": 8, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/7b7250d77f279a1410c72229b5b54f67eebb01ce"}
+      ,{"timestamp": "2026-04-04T22:11:06+08:00", "index": 28, "additions": 51, "deletions": 4, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/291b8e6a589f245951441cda26b807534cc1d585"}
+      ,{"timestamp": "2026-04-04T22:17:08+08:00", "index": 29, "additions": 37, "deletions": 21, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/d310b2fb699f1842e0a88f03c5e8744befdfde19"}
+      ,{"timestamp": "2026-04-04T22:35:58+08:00", "index": 30, "additions": 0, "deletions": 448, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/f138c1d04ed5079ce5e7b6a5ac9045769b5edb6c"}
+      ,{"timestamp": "2026-04-04T23:05:59+08:00", "index": 31, "additions": 33, "deletions": 11, "images": 0, "url": "https://github.com/Shasnow/StarRailAssistant/commit/f69858081da0c0171e9b88f406454e3b39ddfd55"}
+    ]
+  }
+}
