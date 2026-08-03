@@ -1055,3 +1055,196 @@ def get_upstream_repo(repo: RepoInfo) -> tuple[str | None, str | None]:
                 return upstream_owner, upstream_name
     return None, None
 
+
+# ============================================================================
+# Commits 数据获取
+# ============================================================================
+
+
+def _collect_commits(
+    git_log_output: str,
+    seen_shas: set[str],
+    result: list[CommitData],
+) -> None:
+    """解析 git log --format=%H%n%aI 的输出，去重后追加到 result
+
+    输出格式是交替的两行：SHA 和 ISO 日期
+    """
+    lines = [line.strip() for line in git_log_output.split("\n") if line.strip()]
+    for i in range(0, len(lines), 2):
+        if i + 1 >= len(lines):
+            break
+        sha = lines[i]
+        iso_date = lines[i + 1]
+        if sha in seen_shas:
+            continue
+        seen_shas.add(sha)
+        result.append({"sha": sha, "commit": {"author": {"date": iso_date}}})
+
+
+def get_commits_from_git_log(
+    repo_path: str,
+    default_branch: str,
+) -> list[CommitData] | None:
+    """从本地 git log 获取用户的所有 commits（完整历史）
+
+    作者匹配：仅使用 API 学习到的完整身份 "Name <email>"
+    这确保只匹配属于用户的 commits，防止同名冒充
+
+    返回包含 sha 和 commit.author.date 的完整结构，方便时间戳比较
+    """
+    # 仅使用已知身份（从 API 自动学习的 "Name <email>" 格式）
+    # 不使用单独的用户名，防止同名冒充
+    if not KNOWN_AUTHOR_IDENTITIES:
+        print_color("    ⚠️  没有已知作者身份，需要先从 API 学习", Colors.YELLOW)
+        return None
+
+    authors = KNOWN_AUTHOR_IDENTITIES
+    print_color(f"    ℹ️  使用 {len(authors)} 个作者身份匹配", Colors.NC)
+
+    # 使用集合去重（避免同一 commit 被多次匹配）
+    all_shas: set[str] = set()
+    all_commits: list[CommitData] = []
+
+    for author in authors:
+        safe = author.replace('"', '\\"')
+        # --author 匹配主作者 / --grep 匹配 Co-authored-by 标记
+        for flag in (f"--author={safe}", f"--grep=Co-authored-by: {safe}"):
+            output, returncode = run_command(
+                ["git", "log", f"origin/{default_branch}", flag, "--format=%H%n%aI"],
+                cwd=repo_path,
+            )
+            if returncode == 0:
+                _collect_commits(output, all_shas, all_commits)
+
+    if all_commits:
+        print_color(
+            f"    ℹ️  git log 获取 {len(all_commits)} 个commits",
+            Colors.NC,
+        )
+        return all_commits
+    print_color("    ⚠️  git log 失败", Colors.YELLOW)
+    return None
+
+
+def get_commits_from_api(
+    owner: str,
+    repo_name: str,
+    username: str,
+    default_branch: str = "main",
+    max_pages: int = 0,
+) -> list[CommitData]:
+    """从 GitHub API 获取用户的最近 commits（分页，最多 10 页）
+
+    仅作为 git log 失败时的兜底方案
+    注意: API 有分页限制，超出范围的老 commits 将保留缓存
+    """
+    if not max_pages:
+        max_pages = rc.max_api_pages
+    page = 1
+    per_page = rc.per_page
+    all_commits: list[CommitData] = []
+
+    while page <= max_pages:
+        api_url = (
+            f"{rc.github_api}/repos/{owner}/{repo_name}/commits"
+            f"?author={username}&sha={default_branch}"
+            f"&per_page={per_page}&page={page}"
+        )
+        print_color(f"    🔍 API 获取commits (第{page}页)...", Colors.NC)
+
+        output, returncode = github_api_request(api_url)
+
+        if returncode != 0:
+            print_color("    ❌ API调用失败", Colors.RED)
+            return all_commits if all_commits else []
+
+        try:
+            parsed_commits: list[
+                dict[str, str | int | FileData | CommitDetailData | list[FileData]]
+            ] = json.loads(output)
+            if not parsed_commits:
+                break
+
+            for commit in parsed_commits:
+                commit_data: CommitData = commit
+                all_commits.append(commit_data)
+
+            print_color(f"    📊 已获取 {len(all_commits)} 个commits", Colors.NC)
+
+            if len(parsed_commits) < per_page:
+                break
+
+            page += 1
+
+        except json.JSONDecodeError as e:
+            print_color(f"    ❌ JSON 解析失败: {e}", Colors.RED)
+            return all_commits if all_commits else []
+
+    if page > max_pages:
+        print_color(
+            f"    ℹ️  已达到最大页数限制 ({max_pages} 页)，"
+            f"共 {len(all_commits)} 个commits",
+            Colors.NC,
+        )
+
+    return all_commits
+
+
+# ============================================================================
+# Commits 分析
+# ============================================================================
+
+
+def _fetch_commits_with_fallback(
+    ctx: RepoContext,
+    default_branch: str,
+) -> tuple[list[CommitData], bool]:
+    """获取 commits，Git log 优先，API 兜底
+
+    因为 Fork 仓库直接克隆的是上游仓库，所以统一从 origin 获取即可。
+
+    返回: (commits, is_api_fallback)
+    """
+    # 每个仓库都尝试学习身份（每次只 1 次 API 调用）
+    new_identities = learn_author_identities_from_api(
+        ctx.owner, ctx.repo_name, ctx.username
+    )
+    if new_identities:
+        old_count = len(KNOWN_AUTHOR_IDENTITIES)
+        KNOWN_AUTHOR_IDENTITIES.update(new_identities)
+        if len(KNOWN_AUTHOR_IDENTITIES) > old_count:
+            print_color(
+                f"    ✅ 发现新身份，共 {len(KNOWN_AUTHOR_IDENTITIES)} 个",
+                Colors.GREEN,
+            )
+            save_author_identities(KNOWN_AUTHOR_IDENTITIES)
+
+    # 1. 优先尝试从本地 git log 获取（使用已学习的身份）
+    if ctx.repo_path:
+        commits = get_commits_from_git_log(ctx.repo_path, default_branch)
+        if commits:
+            print_color(
+                f"    ✅ 使用 Git log（完整历史）: {len(commits)} 个commits",
+                Colors.GREEN,
+            )
+            return commits, False
+
+    # 2. Git log 失败时，使用 API 兜底
+    print_color("    ⚠️  Git log 无数据，尝试 API 兜底...", Colors.YELLOW)
+
+    api_commits = get_commits_from_api(
+        ctx.owner, ctx.repo_name, ctx.username, default_branch
+    )
+
+    if api_commits:
+        print_color(
+            f"    ✅ 使用 API 兜底数据: {len(api_commits)} 个commits", Colors.GREEN
+        )
+        print_color(
+            "    ⚠️  注意: API 有分页限制，超出范围的老数据将保留缓存", Colors.YELLOW
+        )
+        return api_commits, True
+
+    return [], False
+
