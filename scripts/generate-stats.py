@@ -944,3 +944,114 @@ def clean_stale_cache(
 
     return cache_data
 
+
+# ============================================================================
+# GitHub API 操作
+# ============================================================================
+
+
+def get_repos() -> list[RepoInfo]:
+    """获取用户的所有仓库（支持分页，私有仓库需要 PAT 权限）"""
+    print_color("📡 获取所有仓库列表...", Colors.YELLOW)
+
+    repos: list[RepoInfo] = []
+    page = 1
+    max_pages = rc.max_api_pages
+
+    while page <= max_pages:
+        api_url = (
+            f"{rc.github_api}/users/{ORIGIN_USERNAME}/repos"
+            f"?per_page={rc.per_page}&type=all&page={page}"
+        )
+        output, returncode = github_api_request(api_url)
+
+        if returncode != 0:
+            print_color("❌ 获取仓库列表失败", Colors.RED)
+            return repos if repos else []
+
+        try:
+            parsed_data: list[RepoInfo] | dict[str, str] = json.loads(output)
+
+            # 检查 API 错误响应
+            if isinstance(parsed_data, dict):
+                error_msg = parsed_data.get("message", "")
+                if error_msg:
+                    print_color(f"❌ API 错误: {error_msg}", Colors.RED)
+                    return repos if repos else []
+                break  # dict 但无 message，异常情况
+
+            if not parsed_data:
+                break
+
+            for repo in parsed_data:
+                repo_info: RepoInfo = repo
+                repos.append(repo_info)
+
+            print_color(f"   第 {page} 页：获取到 {len(parsed_data)} 个仓库", Colors.NC)
+
+            if len(parsed_data) < rc.per_page:
+                break
+
+            page += 1
+
+        except json.JSONDecodeError as e:
+            print_color(f"❌ JSON 解析失败: {e}", Colors.RED)
+            print_color(f"数据内容: {output[:500]}", Colors.RED)
+            return repos if repos else []
+
+    print_color(f"✅ 获取到 {len(repos)} 个仓库", Colors.GREEN)
+    for repo in repos:
+        repo_name = repo.get("name", "Unknown")
+        is_fork = repo.get("fork", False)
+        print_color(
+            f"   - {repo_name} ({'Fork' if is_fork else '原创'})",
+            Colors.NC,
+        )
+    return repos
+
+
+def get_upstream_repo(repo: RepoInfo) -> tuple[str | None, str | None]:
+    """获取 fork 仓库的上游仓库信息
+
+    注意：/users/{username}/repos 列表 API 不返回 source/parent 字段，
+    需要额外调用 /repos/{owner}/{repo} 获取详情。
+    """
+    is_fork = repo.get("fork")
+    if not isinstance(is_fork, bool) or not is_fork:
+        return None, None
+
+    # 列表 API 可能已包含 source/parent（某些情况下）
+    upstream_info = repo.get("source") or repo.get("parent")
+
+    # 如果列表 API 未返回上游信息，额外调用详情 API
+    if not upstream_info:
+        repo_name = repo.get("name")
+        if not repo_name:
+            return None, None
+
+        api_url = f"{rc.github_api}/repos/{ORIGIN_USERNAME}/{repo_name}"
+        output, returncode = github_api_request(api_url)
+        if returncode == 0:
+            try:
+                repo_detail = json.loads(output)
+                upstream_info = repo_detail.get("source") or repo_detail.get("parent")
+            except json.JSONDecodeError:
+                return None, None
+
+    if isinstance(upstream_info, dict):
+        upstream_dict: dict[str, str | dict[str, str]] = cast(
+            "dict[str, str | dict[str, str]]",
+            upstream_info,
+        )
+        owner_dict = upstream_dict.get("owner")
+        if isinstance(owner_dict, dict):
+            upstream_owner = owner_dict.get("login")
+            upstream_name = upstream_dict.get("name")
+            if isinstance(upstream_owner, str) and isinstance(upstream_name, str):
+                print_color(
+                    f"    📡 检测到上游仓库: {upstream_owner}/{upstream_name}",
+                    Colors.NC,
+                )
+                return upstream_owner, upstream_name
+    return None, None
+
