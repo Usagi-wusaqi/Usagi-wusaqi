@@ -309,3 +309,215 @@ def learn_author_identities_from_api(
     return identities
 
 
+# ============================================================================
+# 工具函数
+# ============================================================================
+
+
+class Colors:
+    """终端颜色定义"""
+
+    RED = "\033[0;31m"
+    GREEN = "\033[0;32m"
+    YELLOW = "\033[1;33m"
+    NC = "\033[0m"
+
+
+def print_color(message: str, color: str = Colors.NC) -> None:
+    """彩色输出"""
+    print(f"{color}{message}{Colors.NC}")
+
+
+def print_separator(title: str | None = None, color: str = Colors.GREEN) -> None:
+    """打印分隔线，可选标题"""
+    separator = "=" * rc.separator_length
+    print_color(separator, color)
+    if title:
+        print_color(title, color)
+        print_color(separator, color)
+
+
+def is_image_file(filename: str) -> bool:
+    """检查文件是否为图片"""
+    return any(filename.lower().endswith(ext) for ext in rc.image_extensions)
+
+
+def print_stats_summary(
+    additions: int,
+    deletions: int,
+    images: int,
+    *,
+    prefix: str = "",
+) -> None:
+    """打印统计摘要"""
+    net = additions - deletions
+    net_sign = "+" if net >= 0 else ""
+    print_color(
+        f"{prefix}✅ +{additions:,} / -{deletions:,} (net {net_sign}{net:,})",
+        Colors.GREEN,
+    )
+    print_color(f"{prefix}   🖼️ 图片: {images} images", Colors.GREEN)
+
+
+def run_command(cmd: str | list[str], cwd: str | None = None) -> tuple[str, int]:
+    """运行命令并返回输出
+
+    cmd 为 str 时使用 shell=True，为 list 时使用 shell=False（更安全）。
+    """
+    use_shell = isinstance(cmd, str)
+    try:
+        result = subprocess.run(
+            cmd,
+            shell=use_shell,
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            check=False,
+        )
+        return result.stdout.strip(), result.returncode
+    except (OSError, subprocess.SubprocessError) as e:
+        print_color(f"❌ 命令执行失败: {e}", Colors.RED)
+        return "", 1
+
+
+class RateLimitError(Exception):
+    """GitHub API 配额耗尽时抛出"""
+
+
+def github_api_request(api_url: str) -> tuple[str, int]:
+    """执行 GitHub API 请求
+
+    使用 urllib 替代 curl，支持连接复用和 rate limit 检测。
+    当 API 配额耗尽时抛出 RateLimitError。
+
+    返回: (output, returncode)
+    """
+    req = urllib.request.Request(api_url)
+    req.add_header("Accept", "application/vnd.github.v3+json")
+    if TOKEN:
+        req.add_header("Authorization", f"token {TOKEN}")
+
+    try:
+        with urllib.request.urlopen(req) as resp:
+            remaining = resp.headers.get("X-RateLimit-Remaining", "")
+            if remaining.isdigit() and int(remaining) < rc.rate_limit_warn_threshold:
+                print_color(f"⚠️  API 配额剩余: {remaining}", Colors.YELLOW)
+            return resp.read().decode("utf-8"), 0
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        if e.code in (403, 429):
+            remaining = e.headers.get("X-RateLimit-Remaining", "")
+            if remaining.isdigit() and int(remaining) == 0:
+                try:
+                    msg = json.loads(body).get("message", f"HTTP {e.code}")
+                except json.JSONDecodeError:
+                    msg = f"HTTP {e.code}"
+                raise RateLimitError(f"GitHub API 配额耗尽: {msg}") from e
+        return body, 1
+    except urllib.error.URLError as e:
+        print_color(f"❌ 网络请求失败: {e.reason}", Colors.RED)
+        return "", 1
+
+
+def replace_placeholders(content: str, replacements: dict[str, str]) -> str:
+    """通用占位符替换函数"""
+    for placeholder, value in replacements.items():
+        content = content.replace(f"{{{{{placeholder}}}}}", str(value))
+    return content
+
+
+def update_variable_definition(content: str, var_name: str, var_value: str) -> str:
+    """通用变量定义更新函数"""
+    pattern = rf"({var_name} = )([^\n\r]+)"
+    if re.search(pattern, content):
+        content = re.sub(pattern, f"\\1{var_value}", content)
+        print_color(f"✅ 已更新 {var_name} 定义为: {var_value}", Colors.GREEN)
+    return content
+
+
+def _parse_iso_timestamp(ts: str) -> datetime:
+    """ISO 8601 时间戳解析为时区感知 datetime，解析失败返回 epoch"""
+    try:
+        return datetime.fromisoformat(ts)
+    except (ValueError, TypeError):
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def get_current_time() -> str:
+    """获取当前时间字符串"""
+    tz_hours = cfg.get("behavior", {}).get("timezone_offset_hours", 8)
+    tz = timezone(timedelta(hours=tz_hours))
+    return datetime.now(tz).strftime(rc.time_format)
+
+
+def calculate_cache_statistics(cache_data: CacheData) -> tuple[int, int, int, int]:
+    """计算缓存数据的统计信息
+
+    返回: (total_commits, total_additions, total_deletions, total_images)
+    """
+    total_commits = 0
+    total_additions = 0
+    total_deletions = 0
+    total_images = 0
+
+    for commits in cache_data.values():
+        commits_list: list[CommitData] = commits
+        total_commits += len(commits_list)
+        for commit in commits_list:
+            commit_dict = cast("dict[str, str | int]", commit)
+            a = commit_dict.get("additions", 0)
+            d = commit_dict.get("deletions", 0)
+            img = commit_dict.get("images", 0)
+            total_additions += a if isinstance(a, int) else 0
+            total_deletions += d if isinstance(d, int) else 0
+            total_images += img if isinstance(img, int) else 0
+
+    return total_commits, total_additions, total_deletions, total_images
+
+
+def _cache_file_for_repo(repo_name: str) -> Path:
+    """返回指定仓库对应的缓存文件路径"""
+    return CACHE_DIR / f"{repo_name}.json"
+
+
+def _build_commit_url(owner: str, repo_name: str, sha: str) -> str:
+    """生成 commit 对应的 GitHub 页面链接"""
+    return f"{GITHUB_WEB_BASE_URL}/{owner}/{repo_name}/commit/{sha}"
+
+
+def _order_cache_item(item: CommitData, *, index: int | None = None) -> CommitData:
+    """统一 commit 缓存字段顺序，便于 review diff"""
+    item_copy = dict(item)
+    if index is not None:
+        item_copy["index"] = index
+
+    ordered_item: CommitData = {}
+    for key in ("timestamp", "index", "additions", "deletions", "images", "url"):
+        if key in item_copy:
+            ordered_item[key] = item_copy[key]
+
+    for key, value in item_copy.items():
+        if key not in ordered_item:
+            ordered_item[key] = value
+
+    return ordered_item
+
+
+def sort_and_reindex_commits(cache_data: CacheData) -> CacheData:
+    """对缓存数据进行排序和重新编号"""
+    sorted_cache_data: CacheData = {}
+
+    for repo_name, commits in cache_data.items():
+        # 按 timestamp 从旧到新排序（ISO 8601 时区感知比较）
+        sorted_commits: list[CommitData] = sorted(
+            commits,
+            key=lambda x: _parse_iso_timestamp(str(x.get("timestamp", ""))),
+        )
+
+        # 重新编号 index（从 1 开始），使用浅拷贝避免修改原始数据
+        sorted_cache_data[repo_name] = [
+            _order_cache_item(commit, index=idx)
+            for idx, commit in enumerate(sorted_commits, start=1)
+        ]
+
+    return sorted_cache_data
