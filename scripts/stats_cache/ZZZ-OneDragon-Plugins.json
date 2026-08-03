@@ -1,0 +1,18 @@
+{
+  "_metadata": {"total_commits": 12, "total_additions": 2303, "total_deletions": 1399, "total_images": 0, "latest_commit_timestamp": "2026-05-13T23:32:29+08:00"},
+  "data": {"ZZZ-OneDragon-Plugins": [
+      {"timestamp": "2026-01-30T14:29:44+08:00", "index": 1, "additions": 137, "deletions": 0, "images": 0, "url": "https://github.com/OneDragon-Anything/ZZZ-OneDragon-Plugins/commit/1ece6dfd421018a9f36911288bb58caf9227df3e"}
+      ,{"timestamp": "2026-01-30T15:49:31+08:00", "index": 2, "additions": 200, "deletions": 0, "images": 0, "url": "https://github.com/OneDragon-Anything/ZZZ-OneDragon-Plugins/commit/ac8646c5c94705e850ee249c7afbab5ea6e71d3f"}
+      ,{"timestamp": "2026-01-30T15:49:36+08:00", "index": 3, "additions": 17, "deletions": 0, "images": 0, "url": "https://github.com/OneDragon-Anything/ZZZ-OneDragon-Plugins/commit/02fd4ca08fdcd2d896da92587d476e8e86e34c9c"}
+      ,{"timestamp": "2026-01-31T22:44:58+08:00", "index": 4, "additions": 281, "deletions": 55, "images": 0, "url": "https://github.com/OneDragon-Anything/ZZZ-OneDragon-Plugins/commit/69044943402e36c7d9192fa6e0384912565b8341"}
+      ,{"timestamp": "2026-02-01T00:22:56+08:00", "index": 5, "additions": 205, "deletions": 0, "images": 0, "url": "https://github.com/OneDragon-Anything/ZZZ-OneDragon-Plugins/commit/1e75e34d1f92bf02b7fb7ac561aff45d150caa64"}
+      ,{"timestamp": "2026-02-01T00:24:29+08:00", "index": 6, "additions": 68, "deletions": 61, "images": 0, "url": "https://github.com/OneDragon-Anything/ZZZ-OneDragon-Plugins/commit/df9f8d822f570ec72b15866aac1a2693c6fd4030"}
+      ,{"timestamp": "2026-02-02T18:36:25+08:00", "index": 7, "additions": 169, "deletions": 238, "images": 0, "url": "https://github.com/OneDragon-Anything/ZZZ-OneDragon-Plugins/commit/138df2635f1374ca7be81c6f2324620f99e78cfb"}
+      ,{"timestamp": "2026-02-08T16:51:53+08:00", "index": 8, "additions": 443, "deletions": 145, "images": 0, "url": "https://github.com/OneDragon-Anything/ZZZ-OneDragon-Plugins/commit/9ac7a98f7219945dc8facf6c17b6a24e45a54d4b"}
+      ,{"timestamp": "2026-02-09T12:56:49+08:00", "index": 9, "additions": 62, "deletions": 6, "images": 0, "url": "https://github.com/OneDragon-Anything/ZZZ-OneDragon-Plugins/commit/7276a6f3c4a4a08d2dd368c7e2edc7841e7d481b"}
+      ,{"timestamp": "2026-04-05T23:28:49+08:00", "index": 10, "additions": 503, "deletions": 304, "images": 0, "url": "https://github.com/OneDragon-Anything/ZZZ-OneDragon-Plugins/commit/7a293f93acb2dbb720f4f12bd588988f95183767"}
+      ,{"timestamp": "2026-04-27T16:57:21+08:00", "index": 11, "additions": 29, "deletions": 62, "images": 0, "url": "https://github.com/OneDragon-Anything/ZZZ-OneDragon-Plugins/commit/065d8377e8a2421024b8ff753689c81bdb727f99"}
+      ,{"timestamp": "2026-05-13T23:32:29+08:00", "index": 12, "additions": 189, "deletions": 528, "images": 0, "url": "https://github.com/OneDragon-Anything/ZZZ-OneDragon-Plugins/commit/ecbf2a1ce152b490d248183822427be79048005a"}
+    ]
+  }
+}
