@@ -1946,3 +1946,96 @@ def save_contributions_svg(svg_content: str) -> bool:
         return True
 
 
+# ============================================================================
+# 主函数
+# ============================================================================
+
+
+def main() -> int:
+    """主函数"""
+    global cfg
+
+    parser = argparse.ArgumentParser(description="生成 GitHub 统计")
+    parser.add_argument("--clear-cache", action="store_true", help="清除缓存文件")
+    parser.add_argument(
+        "--mode",
+        choices=["actions", "api"],
+        default="actions",
+        help="运行模式: actions=生成本地SVG+更新README, api=仅更新README (默认: actions)",
+    )
+    args = parser.parse_args()
+
+    # 加载集中配置
+    cfg = _load_config()
+    _apply_config()
+
+    print_separator("🚀 开始生成 GitHub 统计...")
+    print_color("📊 统计配置:", Colors.YELLOW)
+    print_color(f"   - 运行模式: {args.mode}", Colors.NC)
+    print_color(f"   - 缓存目录: {CACHE_DIR}", Colors.NC)
+    print_separator()
+
+    # 处理清除缓存
+    if args.clear_cache:
+        if CACHE_DIR.exists():
+            print_color(f"🗑️  清除缓存目录: {CACHE_DIR}", Colors.YELLOW)
+            shutil.rmtree(CACHE_DIR)
+            print_color("✅ 缓存已清除", Colors.GREEN)
+        else:
+            print_color("ℹ️  缓存目录不存在: " + str(CACHE_DIR), Colors.NC)
+        return 0
+
+    # 检查 TOKEN
+    if not TOKEN:
+        print_color("❌ 错误: GH_TOKEN 环境变量未设置", Colors.RED)
+        return 1
+
+    # 加载已知作者身份（后续处理仓库时会增量学习新身份）
+    KNOWN_AUTHOR_IDENTITIES.clear()
+    KNOWN_AUTHOR_IDENTITIES.update(load_author_identities())
+
+    # 获取仓库列表
+    repos = get_repos()
+    if not repos:
+        print_color("⚠️  没有找到仓库", Colors.YELLOW)
+        return 1
+
+    # 处理仓库（克隆 → 分析 → 保存缓存）
+    try:
+        any_changed = process_repos(repos)
+    except RateLimitError as e:
+        print_color(f"❌ {e}", Colors.RED)
+        return 1
+
+    if not any_changed:
+        print_separator("✅ 脚本执行完成（无变更）")
+        return 0
+
+    # 从所有缓存文件的 _metadata 汇总统计
+    stats = aggregate_stats_from_cache()
+    add = int(stats.get("total_additions", 0))
+    dele = int(stats.get("total_deletions", 0))
+    imgs = int(stats.get("total_images", 0))
+    net = add - dele
+    net_sign = "+" if net >= 0 else ""
+    print_separator("📈 汇总统计（来自缓存文件 _metadata）")
+    print_color(f"  ✍️  +{add:,} / -{dele:,} (net {net_sign}{net:,})", Colors.GREEN)
+    print_color(f"  🖼️  总 images: {imgs:,}", Colors.GREEN)
+    print_separator()
+
+    # Actions 模式：生成并保存 SVG 卡片
+    if args.mode == "actions":
+        svg_content = generate_contributions_svg(stats, ORIGIN_USERNAME)
+        if not save_contributions_svg(svg_content):
+            return 1
+
+    # 更新 README.md
+    if not update_readme(stats, mode=args.mode):
+        return 1
+
+    print_separator("✅ 脚本执行完成！")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
