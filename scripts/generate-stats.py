@@ -209,3 +209,103 @@ UPSTREAM_USERNAME = (
 TOKEN = os.environ.get("GH_TOKEN")
 
 
+# ============================================================================
+# 作者身份管理（自动学习）
+# ============================================================================
+
+# 运行时已知的作者身份（脚本启动时从文件加载）
+KNOWN_AUTHOR_IDENTITIES: set[str] = set()
+
+
+def load_author_identities() -> set[str]:
+    """从 cfg 中加载已知的作者身份列表
+
+    存储格式: config.toml → author_identities (Base64 编码的 JSON)
+    """
+    raw_data = cfg.get("author_identities", "")
+    if not raw_data:
+        return set()
+
+    try:
+        decoded_bytes = base64.b64decode(raw_data)
+        data = json.loads(decoded_bytes.decode("utf-8"))
+        identities = set(data.get("identities", []))
+        if identities:
+            print_color(f"💾 已加载 {len(identities)} 个已知作者身份", Colors.GREEN)
+        return identities
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as e:
+        print_color(f"⚠️  加载作者身份失败: {e}", Colors.YELLOW)
+        return set()
+
+
+def save_author_identities(identities: set[str]) -> None:
+    """保存作者身份列表到 config.toml（Base64 编码）"""
+    try:
+        data = {"identities": sorted(identities)}
+        json_str = json.dumps(data, ensure_ascii=False)
+        encoded_data = base64.b64encode(json_str.encode("utf-8")).decode("ascii")
+        cfg["author_identities"] = encoded_data
+
+        # 正则原地替换 author_identities 值（保留注释和格式）
+        content = CONFIG_TOML_PATH.read_text(encoding="utf-8")
+        content = _update_toml_values(content, {"author_identities": encoded_data})
+        CONFIG_TOML_PATH.write_text(content, encoding="utf-8", newline="\n")
+        print_color(f"💾 已保存 {len(identities)} 个作者身份", Colors.GREEN)
+    except OSError as e:
+        print_color(f"⚠️  保存作者身份失败: {e}", Colors.YELLOW)
+
+
+def extract_author_from_commit(commit: CommitData) -> str | None:
+    """从 commit 对象提取 'Name <email>' 格式的作者身份"""
+    commit_dict = commit.get("commit", {})
+    if not isinstance(commit_dict, dict):
+        return None
+
+    author_dict = commit_dict.get("author", {})
+    if not isinstance(author_dict, dict):
+        return None
+
+    name = author_dict.get("name", "")
+    email = author_dict.get("email", "")
+    if name and email:
+        return f"{name} <{email}>"
+    return None
+
+
+def learn_author_identities_from_api(
+    owner: str,
+    repo_name: str,
+    username: str,
+) -> set[str]:
+    """从 GitHub API 学习用户的作者身份
+
+    通过 API 获取用户的 commits，提取所有不同的 author 身份
+    """
+    print_color("    🔍 从 API 学习作者身份...", Colors.YELLOW)
+
+    identities: set[str] = set()
+
+    # 只请求 1 页（100 条 commits），足够学习常见身份
+    api_url = (
+        f"{rc.github_api}/repos/{owner}/{repo_name}/commits"
+        f"?author={username}&per_page={rc.per_page}&page=1"
+    )
+    output, returncode = github_api_request(api_url)
+
+    if returncode == 0:
+        try:
+            commits: list[CommitData] = json.loads(output)
+            for commit in commits:
+                if identity := extract_author_from_commit(commit):
+                    identities.add(identity)
+        except json.JSONDecodeError:
+            pass
+
+    if identities:
+        print_color(f"    ✅ 发现 {len(identities)} 个作者身份", Colors.GREEN)
+        for identity in sorted(identities):
+            print_color(f"       - {identity}", Colors.NC)
+
+    return identities
+
+
