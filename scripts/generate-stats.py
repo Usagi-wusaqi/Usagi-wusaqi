@@ -1664,3 +1664,162 @@ def process_repos(repos: list[RepoInfo]) -> bool:
     return any_changed
 
 
+# ============================================================================
+# README 更新
+# ============================================================================
+
+
+def update_usernames_in_readme(content: str) -> str:
+    """智能更新 README 中的用户名（支持双向替换）
+
+    策略：
+    - 更新 README 顶部的变量定义：ORIGIN_USERNAME = 和 UPSTREAM_USERNAME =
+    - 智能识别当前状态：如果是占位符就替换为真实用户名，如果是真实用户名就保持不变
+    - 支持可重复运行：每次运行都能正确处理
+    """
+    # 更新变量定义
+    content = update_variable_definition(content, "ORIGIN_USERNAME", ORIGIN_USERNAME)
+    content = update_variable_definition(
+        content,
+        "UPSTREAM_USERNAME",
+        UPSTREAM_USERNAME,
+    )
+
+    # 智能替换占位符
+    placeholder_count = content.count("{{ORIGIN_USERNAME}}") + content.count(
+        "{{UPSTREAM_USERNAME}}",
+    )
+
+    if placeholder_count > 0:
+        # 发现占位符，进行替换
+        replacements = {
+            "ORIGIN_USERNAME": ORIGIN_USERNAME,
+            "UPSTREAM_USERNAME": UPSTREAM_USERNAME,
+        }
+        content = replace_placeholders(content, replacements)
+        print_color(f"✅ 已替换 {placeholder_count} 个占位符为真实用户名", Colors.GREEN)
+    else:
+        # 没有占位符，说明已经是真实用户名了
+        print_color("ℹ️  未发现占位符，内容已包含真实用户名", Colors.YELLOW)
+
+    return content
+
+
+def generate_readme_from_template(template_path: Path, *, mode: str = "actions") -> str:
+    """从模板生成 README 内容"""
+    with template_path.open(encoding="utf-8") as f:
+        content = f.read()
+
+    # 根据模式选择贡献卡片来源
+    if mode == "actions":
+        card_src = "contributions.svg"
+    else:
+        vercel = cfg.get("vercel", {})
+        base_url = vercel.get("base_url", "")
+        hide_border = vercel.get("hide_border", True)
+        cache_seconds = vercel.get("cache_seconds", 86400)
+
+        custom_title = cfg.get("svg", {}).get("custom_title")
+        title_param = (
+            f"&custom_title={urllib.parse.quote(custom_title)}"
+            if custom_title is not None
+            else ""
+        )
+        hide_param = "&hide_border=true" if hide_border else ""
+        card_src = (
+            f"{base_url}/api/contributions"
+            f"?username={ORIGIN_USERNAME}"
+            f"{hide_param}{title_param}&cache_seconds={cache_seconds}"
+        )
+
+    # 准备替换数据
+    replacements = {
+        "ORIGIN_USERNAME": ORIGIN_USERNAME,
+        "UPSTREAM_USERNAME": UPSTREAM_USERNAME,
+        "CONTRIBUTIONS_CARD_SRC": card_src,
+    }
+
+    # 替换所有占位符
+    content = replace_placeholders(content, replacements)
+    print_color("✅ 已从模板生成完整的 README", Colors.GREEN)
+
+    return content
+
+
+def update_existing_readme(content: str) -> str:
+    """更新现有 README 内容（回退路径：仅更新用户名）"""
+    return update_usernames_in_readme(content)
+
+
+def save_readme_content(content: str) -> bool:
+    """保存 README 内容到文件"""
+    try:
+        with README_FILE_PATH.open("w", encoding="utf-8", newline="\n") as f:
+            f.write(content)
+    except OSError as e:
+        print_color(f"❌ 保存 README 失败: {e}", Colors.RED)
+        return False
+    else:
+        return True
+
+
+def print_update_summary(stats: StatsData) -> None:
+    """打印更新结果摘要"""
+    add = int(stats.get("total_additions", 0))
+    dele = int(stats.get("total_deletions", 0))
+    imgs = int(stats.get("total_images", 0))
+    latest_ts = stats.get("latest_commit_timestamp", "")
+    net = add - dele
+    net_sign = "+" if net >= 0 else ""
+    print_color("✅ README.md 更新成功！", Colors.GREEN)
+    print_color(f"   ✍️  +{add:,} / -{dele:,} (net {net_sign}{net:,})", Colors.NC)
+    print_color(f"   🖼️  图片数量: {imgs:,}", Colors.NC)
+    print_color(f"   🕒 最新 commit: {latest_ts}", Colors.NC)
+    print_color(f"   👤 远端用户名: {ORIGIN_USERNAME}", Colors.NC)
+    print_color(f"   👑 上游用户名: {UPSTREAM_USERNAME}", Colors.NC)
+
+
+def update_readme(stats: StatsData, *, mode: str = "actions") -> bool:
+    """更新 README.md（支持模板系统）
+
+    功能：
+    - 如果存在 README.template.md，从模板生成完整的 README
+    - 如果不存在模板，仅更新现有 README 中的用户名
+
+    注意：变更检测已由 main() 完成，本函数无条件执行更新。
+
+    参数：
+    - stats: 统计数据字典
+    - mode: 运行模式 (actions/api)
+    """
+    print_color("📝 更新 README.md...", Colors.YELLOW)
+
+    template_path = Path(__file__).parent.parent / "README.template.md"
+
+    if template_path.exists():
+        # 使用模板系统
+        print_color("📄 使用模板系统生成 README", Colors.GREEN)
+        content = generate_readme_from_template(template_path, mode=mode)
+    else:
+        # 回退：仅更新用户名
+        print_color("⚠️  未发现模板文件，更新现有 README", Colors.YELLOW)
+
+        if not README_FILE_PATH.exists():
+            print_color("❌ README.md 不存在！", Colors.RED)
+            return False
+
+        # 读取现有 README.md
+        with README_FILE_PATH.open(encoding="utf-8") as f:
+            existing_content = f.read()
+
+        content = update_existing_readme(existing_content)
+
+    # 保存 README.md
+    if not save_readme_content(content):
+        return False
+
+    # 显示更新结果
+    print_update_summary(stats)
+    return True
+
+
