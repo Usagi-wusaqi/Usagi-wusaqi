@@ -1823,3 +1823,126 @@ def update_readme(stats: StatsData, *, mode: str = "actions") -> bool:
     return True
 
 
+# ============================================================================
+# SVG 卡片生成（Actions 模式）
+# ============================================================================
+
+SVG_CARD_PATH = Path(__file__).parent.parent / "contributions.svg"
+
+
+def _format_number(num: int) -> str:
+    """千分位格式化数字"""
+    return f"{num:,}"
+
+
+def _escape_html(text: str) -> str:
+    """HTML 转义"""
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def generate_contributions_svg(
+    stats: StatsData,
+    display_name: str,
+) -> str:
+    """生成贡献统计 SVG 卡片（与 Vercel 版本 renderContributionsCard 对齐）
+
+    颜色、尺寸、标题等均从 cfg["svg"] 读取。
+    """
+    svg = cfg.get("svg", {})
+    layout = svg.get("layout", {})
+    font = svg.get("font", {})
+    labels = svg.get("labels", {})
+
+    additions = int(stats.get("total_additions", 0))
+    deletions = int(stats.get("total_deletions", 0))
+    images = int(stats.get("total_images", 0))
+    net = additions - deletions
+    net_sign = "+" if net >= 0 else ""
+
+    title_color = svg.get("title_color", "")
+    text_color = svg.get("text_color", "")
+    bg_color = svg.get("bg_color", "")
+    border_color = svg.get("border_color", "")
+    add_color = svg.get("add_color", "")
+    del_color = svg.get("del_color", "")
+    img_color = svg.get("img_color", "")
+    net_color = add_color if net >= 0 else del_color
+
+    custom_title = svg.get("custom_title")
+    if custom_title is not None:
+        title_text = _escape_html(custom_title)
+    else:
+        suffix = "" if _escape_html(display_name).rstrip().endswith("s") else "s"
+        title_text = f"{_escape_html(display_name)}&apos;{suffix} Code Contributions"
+
+    width = svg.get("width", 0)
+    height = svg.get("height", 0)
+    padding = layout.get("padding", 67)
+    title_y = layout.get("title_y", 70)
+    stats_y = layout.get("stats_y", 120)
+    value_gap = layout.get("value_gap", 36)
+    border_radius = layout.get("border_radius", 4.5)
+    col_width = (width - padding) // 4
+
+    font_family = font.get("family", "'Segoe UI', Ubuntu, Sans-Serif")
+    font_family_ext = font.get(
+        "family_extended", "'Segoe UI', Ubuntu, 'Helvetica Neue', Sans-Serif"
+    )
+    header_size = font.get("header_size", "600 48px")
+    header_size_ff = font.get("header_size_firefox", "41px")
+    stat_size = font.get("stat_size", "600 20px")
+    bold_size = font.get("bold_size", "700 36px")
+
+    lbl_add = labels.get("additions", "Additions")
+    lbl_del = labels.get("deletions", "Deletions")
+    lbl_net = labels.get("net", "Net")
+    lbl_img = labels.get("images", "Images")
+
+    return f"""\
+<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" fill="none" role="img">
+  <style>
+    .header {{ font: {header_size} {font_family}; fill: {title_color}; }}
+    @supports(-moz-appearance: auto) {{ .header {{ font-size: {header_size_ff}; }} }}
+    .stat {{ font: {stat_size} {font_family_ext}; fill: {text_color}; }}
+    .bold {{ font: {bold_size} {font_family_ext}; }}
+  </style>
+  <rect x="0.5" y="0.5" width="{width - 1}" height="{height - 1}" rx="{border_radius}" fill="{bg_color}" stroke="{border_color}" stroke-width="1"/>
+  <text x="{padding}" y="{title_y}" class="header">{title_text}</text>
+  <g transform="translate({padding}, {stats_y})">
+    <text x="0" y="0" class="stat">{lbl_add}</text>
+    <text x="0" y="{value_gap}" class="stat bold" style="fill:{add_color}">+{_format_number(additions)}</text>
+  </g>
+  <g transform="translate({padding + col_width}, {stats_y})">
+    <text x="0" y="0" class="stat">{lbl_del}</text>
+    <text x="0" y="{value_gap}" class="stat bold" style="fill:{del_color}">-{_format_number(deletions)}</text>
+  </g>
+  <g transform="translate({padding + col_width * 2}, {stats_y})">
+    <text x="0" y="0" class="stat">{lbl_net}</text>
+    <text x="0" y="{value_gap}" class="stat bold" style="fill:{net_color}">{net_sign}{_format_number(net)}</text>
+  </g>
+  <g transform="translate({padding + col_width * 3}, {stats_y})">
+    <text x="0" y="0" class="stat">{lbl_img}</text>
+    <text x="0" y="{value_gap}" class="stat bold" style="fill:{img_color}">{_format_number(images)}</text>
+  </g>
+</svg>"""
+
+
+def save_contributions_svg(svg_content: str) -> bool:
+    """保存贡献统计 SVG 卡片到文件"""
+    try:
+        with SVG_CARD_PATH.open("w", encoding="utf-8", newline="\n") as f:
+            f.write(svg_content)
+            f.write("\n")
+        print_color(f"✅ SVG 卡片已生成: {SVG_CARD_PATH}", Colors.GREEN)
+    except OSError as e:
+        print_color(f"❌ 保存 SVG 失败: {e}", Colors.RED)
+        return False
+    else:
+        return True
+
+
