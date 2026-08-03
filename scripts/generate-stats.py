@@ -774,3 +774,173 @@ def normalize_cache_data(cache_data: CacheData) -> CacheData:
 
         normalized_cache[repo_name] = normalized_items
 
+    return normalized_cache
+
+
+def _extract_commit_cache_urls(
+    commits: list[CommitData],
+    *,
+    owner: str,
+    repo_name: str,
+) -> tuple[set[str], str, str]:
+    """从 commits 提取缓存 URL 集合和时间戳范围
+
+    返回: (url_set, min_timestamp, max_timestamp)
+    """
+    url_set: set[str] = set()
+    min_ts = ""
+    max_ts = ""
+
+    for commit in commits:
+        sha = commit.get("sha")
+        if isinstance(sha, str):
+            url_set.add(_build_commit_url(owner, repo_name, sha))
+
+        commit_dict = commit.get("commit", {})
+        if isinstance(commit_dict, dict):
+            author_dict = commit_dict.get("author", {})
+            if isinstance(author_dict, dict):
+                ts = author_dict.get("date", "")
+                if ts:
+                    if not min_ts or ts < min_ts:
+                        min_ts = ts
+                    if not max_ts or ts > max_ts:
+                        max_ts = ts
+
+    return url_set, min_ts, max_ts
+
+
+def _partition_cached_items(
+    cached_items: list[CommitData],
+    min_timestamp: str,
+    max_timestamp: str,
+    *,
+    is_api_fallback: bool,
+) -> tuple[list[CommitData], list[CommitData]]:
+    """将缓存项分为范围内和范围外两组
+
+    返回: (in_range_items, out_of_range_items)
+    """
+    in_range: list[CommitData] = []
+    out_of_range: list[CommitData] = []
+
+    for item in cached_items:
+        item_ts = item.get("timestamp", "")
+        if not isinstance(item_ts, str):
+            in_range.append(item)
+            continue
+        if (
+            is_api_fallback
+            and min_timestamp
+            and max_timestamp
+            and (item_ts < min_timestamp or item_ts > max_timestamp)
+        ):
+            out_of_range.append(item)
+        else:
+            in_range.append(item)
+
+    return in_range, out_of_range
+
+
+def _log_cache_cleanup_mode(
+    *,
+    is_api_fallback: bool,
+    min_timestamp: str,
+    max_timestamp: str,
+    out_of_range_count: int,
+) -> None:
+    """打印缓存清理模式信息"""
+    if is_api_fallback:
+        min_ts = min_timestamp[:10] if min_timestamp else "?"
+        max_ts = max_timestamp[:10] if max_timestamp else "?"
+        mode_desc = f"API 兜底模式（检查范围: {min_ts} ~ {max_ts}）"
+        if out_of_range_count > 0:
+            print_color(f"    ℹ️  {mode_desc}", Colors.NC)
+            print_color(
+                f"       保留 {out_of_range_count} 个超出 API 范围的数据", Colors.NC
+            )
+    else:
+        print_color("    ℹ️  Git log 模式（完整历史）", Colors.NC)
+
+
+def clean_stale_cache(
+    cache_data: CacheData,
+    current_commits_with_data: list[CommitData],
+    repo_name: str,
+    *,
+    owner: str,
+    is_api_fallback: bool = False,
+) -> CacheData:
+    """清理过期的缓存（检测变基等导致的 commit 链接变化）
+
+    策略：
+    - Git log 模式（完整历史）：对比所有 commits，删除消失的
+    - API 兜底模式：只对比 API 返回的时间戳范围内的 commits，范围外的保留
+
+    参数：
+    - current_commits_with_data: 当前数据源的 commit 对象列表（包含时间戳）
+    - is_api_fallback: 是否为 API 兜底模式
+    """
+    if repo_name not in cache_data:
+        return cache_data
+
+    # 提取当前 commits 的缓存 URL 集合和时间戳范围
+    current_commit_set, min_timestamp, max_timestamp = _extract_commit_cache_urls(
+        current_commits_with_data,
+        owner=owner,
+        repo_name=repo_name,
+    )
+
+    # 将缓存项分组
+    cached_items_in_range, cached_items_out_of_range = _partition_cached_items(
+        cache_data[repo_name],
+        min_timestamp,
+        max_timestamp,
+        is_api_fallback=is_api_fallback,
+    )
+
+    # 获取范围内缓存的 URL 集合
+    cached_urls_in_range: set[str] = {
+        url
+        for item in cached_items_in_range
+        if (url := extract_url_from_cache_item(item))
+    }
+
+    # 找出消失的 commits
+    stale_commits = cached_urls_in_range - current_commit_set
+
+    # 打印模式信息
+    _log_cache_cleanup_mode(
+        is_api_fallback=is_api_fallback,
+        min_timestamp=min_timestamp,
+        max_timestamp=max_timestamp,
+        out_of_range_count=len(cached_items_out_of_range),
+    )
+
+    # 处理过期缓存
+    if stale_commits:
+        print_color(
+            f"    🧹 检测到 {len(stale_commits)} 个消失的commits", Colors.YELLOW
+        )
+        print_color("       原因：被变基、压缩或重写", Colors.YELLOW)
+
+        # 保留范围外的 + 范围内未过期的
+        new_cache_list = list(cached_items_out_of_range) + [
+            item
+            for item in cached_items_in_range
+            if extract_url_from_cache_item(item) not in stale_commits
+        ]
+        cache_data[repo_name] = new_cache_list
+
+        print_color(
+            f"    ✅ 已清除 {len(stale_commits)} 个过期的commit缓存", Colors.GREEN
+        )
+
+        if not cache_data[repo_name]:
+            del cache_data[repo_name]
+            print_color("    ℹ️  仓库缓存已清空", Colors.NC)
+    else:
+        print_color("    ✅ 缓存数据完整，无消失的commits", Colors.GREEN)
+
+    return cache_data
+
