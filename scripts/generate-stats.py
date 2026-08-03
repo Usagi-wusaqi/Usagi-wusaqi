@@ -1248,3 +1248,275 @@ def _fetch_commits_with_fallback(
 
     return [], False
 
+
+def _get_commit_details_from_git(
+    repo_path: str,
+    sha: str,
+) -> CommitData:
+    """从本地 git 获取 commit 详情（文件状态 + 增删行数）
+
+    注意：--name-status 和 --shortstat 是互斥的 diff 输出格式，
+    合并使用时后者会被忽略。因此拆成两条 git 命令分别获取。
+    """
+    commit_data: CommitData = {"files": [], "stats": {"additions": 0, "deletions": 0}}
+
+    # 命令 1：--shortstat 获取增删行数汇总
+    output, returncode = run_command(
+        ["git", "show", "--shortstat", "--pretty=format:", sha], cwd=repo_path
+    )
+    if returncode == 0:
+        for line in output.split("\n"):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            # "3 files changed, 10 insertions(+), 5 deletions(-)"
+            if "changed" in stripped and (
+                "insertion" in stripped or "deletion" in stripped
+            ):
+                ins_match = re.search(r"(\d+) insertion", stripped)
+                del_match = re.search(r"(\d+) deletion", stripped)
+                stat_dict = cast("dict[str, int]", commit_data.get("stats", {}))
+                if ins_match:
+                    stat_dict["additions"] = int(ins_match.group(1))
+                if del_match:
+                    stat_dict["deletions"] = int(del_match.group(1))
+                break
+
+    # 命令 2：--name-status 获取文件状态（用于图片计数）
+    output, returncode = run_command(
+        ["git", "show", "--name-status", "--pretty=format:", sha], cwd=repo_path
+    )
+    if returncode == 0:
+        for line in output.split("\n"):
+            parts = line.split("\t")
+            if len(parts) >= MIN_STATUS_PARTS:
+                status_code = parts[0].rstrip("0123456789")  # R100->R, C100->C
+                if status_code in ("R", "C") and len(parts) >= 3:
+                    filename = parts[2]
+                    status = "added" if status_code == "C" else "modified"
+                else:
+                    filename = parts[1]
+                    status = "added" if parts[0] == "A" else "modified"
+                files = commit_data.get("files", [])
+                if isinstance(files, list):
+                    files.append({"filename": filename, "status": status})
+
+    return commit_data
+
+
+def _get_commit_details_from_api(owner: str, repo_name: str, sha: str) -> CommitData:
+    """从 API 获取 commit 详情"""
+    api_url = f"{rc.github_api}/repos/{owner}/{repo_name}/commits/{sha}"
+    output, returncode = github_api_request(api_url)
+    if returncode == 0:
+        try:
+            return json.loads(output)
+        except json.JSONDecodeError:
+            pass
+    return {}
+
+
+def _calculate_commit_stats(commit_data: CommitData) -> tuple[int, int, int]:
+    """计算单个 commit 的统计数据
+
+    返回: (additions, deletions, images)
+    """
+    # 提取增删行数（git --shortstat 或 API stats 字段）
+    stats = commit_data.get("stats", {})
+    additions = 0
+    deletions = 0
+    if isinstance(stats, dict):
+        a = stats.get("additions", 0)
+        d = stats.get("deletions", 0)
+        additions = a if isinstance(a, int) else 0
+        deletions = d if isinstance(d, int) else 0
+
+    # 统计图片（仅 status=added 的图片文件）
+    images = 0
+    files_list = commit_data.get("files", [])
+    if isinstance(files_list, list):
+        for file in files_list:
+            if file.get("status") == "added":
+                filename = file.get("filename", "")
+                if isinstance(filename, str) and is_image_file(filename):
+                    images += 1
+
+    return additions, deletions, images
+
+
+def _get_commit_timestamp(commit: CommitData) -> str:
+    """从 commit 获取时间戳"""
+    commit_dict = commit.get("commit", {})
+    if isinstance(commit_dict, dict):
+        author_dict = commit_dict.get("author", {})
+        if isinstance(author_dict, dict):
+            ts = author_dict.get("date", "")
+            if ts:
+                return ts
+    return datetime.now(tz=timezone.utc).isoformat()
+
+
+def analyze_commits(ctx: RepoContext) -> bool:
+    """分析代码贡献并保存缓存
+
+    数据获取策略：
+    - Fork 仓库：直接克隆上游仓库，从 origin 获取 Git log（完整历史）
+    - 非 Fork 仓库：克隆自己的仓库，从 origin 获取 Git log（完整历史）
+    - API 仅在 git log 失败时兜底（有分页限制）
+
+    结果写入缓存文件，由 aggregate_stats_from_cache() 汇总。
+
+    返回: 缓存是否有变更（新 commit / 过期清理）
+    """
+    print_color("    📊 开始分析commits...", Colors.YELLOW)
+
+    # 加载缓存
+    cache_data = load_cache(ctx.repo_name)
+
+    # 获取默认分支
+    default_branch = "main"
+    if ctx.repo_path:
+        git_cmd = "git symbolic-ref refs/remotes/origin/HEAD"
+        output, returncode = run_command(git_cmd, cwd=ctx.repo_path)
+        if returncode == 0:
+            default_branch = output.strip().removeprefix("refs/remotes/origin/")
+        else:
+            default_branch = "main"
+        print_color(f"    ℹ️  默认分支: {default_branch}", Colors.NC)
+
+    # 获取 commits（Git log 优先，API 兜底）
+    all_commits, is_api_fallback = _fetch_commits_with_fallback(ctx, default_branch)
+
+    if not all_commits:
+        print_color("    ℹ️  未找到commits", Colors.NC)
+        return False
+
+    total_commits = len(all_commits)
+    print_color(f"    📊 最终使用 {total_commits} 个commits", Colors.NC)
+
+    # 清理过期缓存（当前仓库中已经消失的 commit 链接）
+    old_count = len(cache_data.get(ctx.repo_name, []))
+    cache_data = clean_stale_cache(
+        cache_data,
+        all_commits,
+        ctx.repo_name,
+        owner=ctx.owner,
+        is_api_fallback=is_api_fallback,
+    )
+    stale_cleaned = len(cache_data.get(ctx.repo_name, [])) != old_count
+
+    # 处理所有 commits（不变的跳过，新的重新获取）
+    total_additions, total_deletions, total_images, cache_hits, cache_misses = (
+        _process_all_commits(
+            all_commits=all_commits,
+            cache_data=cache_data,
+            ctx=ctx,
+        )
+    )
+
+    # 显示统计信息
+    _print_cache_stats(cache_hits, cache_misses, total_commits)
+    print_stats_summary(
+        total_additions,
+        total_deletions,
+        total_images,
+        prefix="    ",
+    )
+
+    # 保存缓存（累加写入文件头 _metadata）
+    saved_changed = save_cache(ctx.repo_name, cache_data)
+
+    return cache_misses > 0 or stale_cleaned or saved_changed
+
+
+def _process_all_commits(
+    *,
+    all_commits: list[CommitData],
+    cache_data: CacheData,
+    ctx: RepoContext,
+) -> tuple[int, int, int, int, int]:
+    """处理所有 commits 并统计
+
+    返回: (total_additions, total_deletions, total_images, cache_hits, cache_misses)
+    """
+    total_additions = 0
+    total_deletions = 0
+    total_images = 0
+    cache_hits = 0
+    cache_misses = 0
+    processed = 0
+    total_commits = len(all_commits)
+
+    # 构建缓存索引 O(1) 查找
+    cache_index: dict[str, CommitData] = {}
+    for item in cache_data.get(ctx.repo_name, []):
+        cached_url = extract_url_from_cache_item(item)
+        if cached_url:
+            cache_index[cached_url] = item
+
+    for commit in all_commits:
+        sha = commit.get("sha")
+        if not sha or not isinstance(sha, str):
+            continue
+
+        processed += 1
+        if processed % rc.progress_interval == 0:
+            pct = processed * 100 // total_commits
+            print_color(
+                f"    📊 处理中: {processed}/{total_commits} ({pct}%)", Colors.NC
+            )
+
+        commit_url = _build_commit_url(ctx.owner, ctx.repo_name, sha)
+        cached_entry = cache_index.get(commit_url)
+
+        # 缓存命中：复用已统计的数据
+        if cached_entry:
+            a = cached_entry.get("additions", 0)
+            d = cached_entry.get("deletions", 0)
+            total_additions += a if isinstance(a, int) else 0
+            total_deletions += d if isinstance(d, int) else 0
+            img = cached_entry.get("images", 0)
+            total_images += img if isinstance(img, int) else 0
+            cache_hits += 1
+            continue
+
+        # 缓存未命中，获取详情
+        cache_misses += 1
+        if ctx.repo_path:
+            commit_data = _get_commit_details_from_git(ctx.repo_path, sha)
+        else:
+            commit_data = _get_commit_details_from_api(ctx.owner, ctx.repo_name, sha)
+
+        # 计算统计
+        additions, deletions, images = _calculate_commit_stats(commit_data)
+        total_additions += additions
+        total_deletions += deletions
+        total_images += images
+
+        if ctx.repo_name not in cache_data:
+            cache_data[ctx.repo_name] = []
+
+        cache_data[ctx.repo_name].append(
+            {
+                "timestamp": _get_commit_timestamp(commit),
+                "index": processed,
+                "additions": additions,
+                "deletions": deletions,
+                "images": images,
+                "url": commit_url,
+            }
+        )
+
+    return total_additions, total_deletions, total_images, cache_hits, cache_misses
+
+
+def _print_cache_stats(cache_hits: int, cache_misses: int, total_commits: int) -> None:
+    """打印缓存统计信息"""
+    print_color("    💾 缓存统计:", Colors.YELLOW)
+    print_color(f"       - 缓存命中: {cache_hits} 个commit", Colors.NC)
+    print_color(f"       - 缓存未命中: {cache_misses} 个commit", Colors.NC)
+    if total_commits > 0:
+        cache_hit_rate = cache_hits / total_commits * 100
+        print_color(f"       - 缓存命中率: {cache_hit_rate:.1f}%", Colors.NC)
+
+
