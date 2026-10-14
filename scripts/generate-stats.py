@@ -45,15 +45,14 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
-
-import tomllib
 
 # ============================================================================
 # 类型定义
@@ -440,7 +439,7 @@ def _parse_iso_timestamp(ts: str) -> datetime:
     try:
         return datetime.fromisoformat(ts)
     except (ValueError, TypeError):
-        return datetime.min.replace(tzinfo=timezone.utc)
+        return datetime.min.replace(tzinfo=UTC)
 
 
 def get_current_time() -> str:
@@ -627,7 +626,7 @@ def save_cache(repo_name: str, cache_data: CacheData) -> bool:
         )
 
         # 取最新 commit 的时间戳（时区感知比较，排序后不一定是最后一条）
-        latest_dt = datetime.min.replace(tzinfo=timezone.utc)
+        latest_dt = datetime.min.replace(tzinfo=UTC)
         latest_ts = ""
         for commits in sorted_cache_data.values():
             for c in commits:
@@ -687,7 +686,7 @@ def aggregate_stats_from_cache() -> StatsData:
     total_additions = 0
     total_deletions = 0
     total_images = 0
-    latest_dt = datetime.min.replace(tzinfo=timezone.utc)
+    latest_dt = datetime.min.replace(tzinfo=UTC)
     latest_ts = ""
 
     if not CACHE_DIR.exists():
@@ -699,7 +698,7 @@ def aggregate_stats_from_cache() -> StatsData:
             "latest_commit_timestamp": "",
         }
 
-    latest_dt = datetime.min.replace(tzinfo=timezone.utc)
+    latest_dt = datetime.min.replace(tzinfo=UTC)
     latest_ts = ""
 
     for cache_file in sorted(CACHE_DIR.glob("*.json")):
@@ -1353,7 +1352,7 @@ def _get_commit_timestamp(commit: CommitData) -> str:
             ts = author_dict.get("date", "")
             if ts:
                 return ts
-    return datetime.now(tz=timezone.utc).isoformat()
+    return datetime.now(tz=UTC).isoformat()
 
 
 def analyze_commits(ctx: RepoContext) -> bool:

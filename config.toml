@@ -34,8 +34,8 @@ title_color = "#2f80ed"
 text_color = "#434d58"
 # 卡片背景颜色
 bg_color = "#fffefe"
-# 卡片边框颜色
-border_color = "#e4e2e2"
+# 卡片边框颜色（透明）
+border_color = "#ffffff00"
 # Additions 数值颜色
 add_color = "#28a745"
 # Deletions 数值颜色
