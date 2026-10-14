@@ -15,18 +15,20 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          python-version: "3.11"
+          components: rustfmt, clippy
 
-      - name: Install Ruff
-        run: pip install ruff
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: scripts
 
-      - name: Run Ruff Lint
-        run: |
-          ruff check scripts/ --select E,W,F,I,B,UP,SIM,TID --ignore E501
+      - name: Run rustfmt check
+        working-directory: scripts
+        run: cargo fmt --check
 
-      - name: Run Ruff Format Check
-        run: |
-          ruff format scripts/ --check
+      - name: Run clippy
+        working-directory: scripts
+        run: cargo clippy -- -D warnings
