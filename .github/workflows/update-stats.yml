@@ -21,19 +21,16 @@ jobs:
         with:
           fetch-depth: 0  # 获取完整历史以便更好的 git log 分析
 
-      # 设置 Rust 工具链
-      - name: 设置 Rust 工具链
-        uses: dtolnay/rust-toolchain@stable
+      # 下载预编译的统计脚本（由「构建统计脚本」工作流发布到 stats-bin）
+      - name: 下载统计脚本
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p scripts/target/release
+          gh release download stats-bin --pattern generate-stats --dir scripts/target/release --clobber
+          chmod +x scripts/target/release/generate-stats
 
-      # 缓存 Rust 构建产物
-      - name: 缓存 Rust 构建
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: scripts
-
-      # 编译统计脚本
-      - name: 编译统计脚本
-        run: cargo build --release --manifest-path scripts/Cargo.toml
+          ls -lh scripts/target/release/generate-stats
 
       # 确定目标用户
       - name: 确定目标用户
