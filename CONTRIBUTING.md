@@ -41,13 +41,15 @@
 
 ### 本地运行
 
+> **前置要求：** 需先安装 Rust 工具链（<https://rustup.rs>），首次运行会自动编译统计脚本
+
 ```bash
 export GH_TOKEN="your-github-token"
-python scripts/generate-stats.py               # 默认 actions 模式：生成本地 SVG 卡片
-python scripts/generate-stats.py --mode api     # api 模式：仅生成 config.toml，SVG 由 Vercel 实时渲染
+cargo run --release --manifest-path scripts/Cargo.toml --               # 默认 actions 模式：生成本地 SVG 卡片
+cargo run --release --manifest-path scripts/Cargo.toml -- --mode api    # api 模式：仅生成 config.toml，SVG 由 Vercel 实时渲染
 
 # 可选参数
-python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（不会重新生成统计）
+cargo run --release --manifest-path scripts/Cargo.toml -- --clear-cache # 清除缓存后直接退出（不会重新生成统计）
 ```
 
 > **注意：** 脚本同时统计代码行数（additions/deletions）和图片数。`--mode actions`（默认）会生成本地 `contributions.svg` 卡片；`--mode api` 仅生成 `config.toml` 供 Vercel 卡片读取。
@@ -125,7 +127,7 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（
 两行格式：第一行 `_comment`（静态），第二行数据字段（动态，git diff 只变这行）。`last_updated` 使用最新 commit 的 ISO 8601 时间戳（而非脚本运行时间），这样没有新代码时文件内容不变 → git 无 diff → 不产生提交。
 
 ```json
-{"_comment":"generate-stats.py 自动生成。Vercel API 读取 total_images；Actions SVG 读取全部字段",
+{"_comment":"generate-stats 自动生成。Vercel API 读取 total_images；Actions SVG 读取全部字段",
 "total_additions":12345,"total_deletions":6789,"total_images":42,"last_updated":"2024-01-15T10:30:00+08:00"}
 ```
 
@@ -204,7 +206,7 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（
 - **上游创建者保留** - 保留上游创建者信息，便于识别来源
 
 ### 🔧 技术优势
-- **零依赖** - 只使用 Python 标准库，无需额外安装
+- **依赖精简** - 仅 serde / serde_json / toml 三个 crate，无额外运行时依赖
 - **容错性强** - git log 失败时自动降级使用 API 兜底
 - **格式保持** - 从模板生成 README，保持布局一致；回退模式用正则精确替换
 
@@ -285,15 +287,6 @@ env:
 3. **替换所有占位符** - 将所有占位符替换为实际值
 4. **生成最终 README** - 写入 `README.md`，包含真实数据
 
-### 性能表现
-
-| 场景 | 预期时间 | 说明 |
-| ---- | -------- | ---- |
-| 首次运行 | 2-10 分钟 | 取决于仓库数量和 commit 历史 |
-| 日常更新 | 30-60 秒 | 95%+ 缓存命中率，增量获取新 commits |
-| 清除缓存后 | 2-10 分钟 | 需要重新分析所有数据（每个 commit 执行 git show） |
-| API 限流时 | 无明显影响 | 主要使用 git log，API 仅兜底 |
-
 ---
 
 ## 🔬 技术原理
@@ -326,7 +319,7 @@ env:
 
 #### Actions 模式（默认）
 
-- **生成方式** - Python 脚本 `generate_contributions_svg()` 直接生成 `contributions.svg`
+- **生成方式** - Rust 脚本 `generate_contributions_svg()` 直接生成 `contributions.svg`
 - **数据来源** - `aggregate_stats_from_cache()` 汇总的 `StatsData`
 - **展示** - 水平四列布局（Additions / Deletions / Net / Images），1200×200
 - **触发** - GitHub Actions 每日自动生成并提交到仓库
@@ -408,7 +401,7 @@ env:
 ls -la scripts/stats_cache/
 
 # 查看缓存统计信息（会显示缓存命中率）
-python scripts/generate-stats.py
+cargo run --release --manifest-path scripts/Cargo.toml
 
 # 首次运行耐心等待，后续会很快（95%+ 缓存命中率）
 ```
@@ -435,20 +428,20 @@ curl -H "Authorization: token $GH_TOKEN" https://api.github.com/rate_limit
 
 ```bash
 # 查看详细输出
-python scripts/generate-stats.py
+cargo run --release --manifest-path scripts/Cargo.toml
 
 # 运行模式
-python scripts/generate-stats.py                # 默认 actions 模式
-python scripts/generate-stats.py --mode api      # api 模式（仅生成 config.toml）
+cargo run --release --manifest-path scripts/Cargo.toml                # 默认 actions 模式
+cargo run --release --manifest-path scripts/Cargo.toml -- --mode api  # api 模式（仅生成 config.toml）
 
 # 清除缓存（仅清除，不会重新运行统计）
-python scripts/generate-stats.py --clear-cache
+cargo run --release --manifest-path scripts/Cargo.toml -- --clear-cache
 
 # 清除缓存后重新运行（需要两条命令）
-python scripts/generate-stats.py --clear-cache && python scripts/generate-stats.py
+cargo run --release --manifest-path scripts/Cargo.toml -- --clear-cache && cargo run --release --manifest-path scripts/Cargo.toml
 
 # 显示帮助信息
-python scripts/generate-stats.py --help
+cargo run --release --manifest-path scripts/Cargo.toml -- --help
 ```
 
 ### 支持的图片格式
