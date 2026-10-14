@@ -1,0 +1,53 @@
+name: 构建统计脚本
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/**'
+      - '.github/workflows/build-stats.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # 检出代码仓库
+      - name: 检出代码仓库
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      # 设置 Rust 工具链
+      - name: 设置 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      # 缓存 Rust 构建产物
+      - name: 缓存 Rust 构建
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: scripts
+
+      # 编译统计脚本（此步不在统计工作流的关键路径上）
+      - name: 编译统计脚本
+        run: cargo build --release --manifest-path scripts/Cargo.toml
+
+      # 发布预编译二进制到 stats-bin 预发布，供统计工作流直接下载
+      - name: 发布预编译二进制
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view stats-bin >/dev/null 2>&1 || \
+            gh release create stats-bin \
+              --title "统计脚本预编译二进制" \
+              --notes "由构建统计脚本工作流自动构建，请勿手动修改" \
+              --prerelease
+
+          gh release upload stats-bin scripts/target/release/generate-stats --clobber
+
+          echo "✅ 已发布预编译二进制"
