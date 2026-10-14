@@ -21,11 +21,19 @@ jobs:
         with:
           fetch-depth: 0  # 获取完整历史以便更好的 git log 分析
 
-      # 设置 Python
-      - name: 设置 Python
-        uses: actions/setup-python@v6
+      # 设置 Rust 工具链
+      - name: 设置 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      # 缓存 Rust 构建产物
+      - name: 缓存 Rust 构建
+        uses: Swatinem/rust-cache@v2
         with:
-          python-version: "3.11"
+          workspaces: scripts
+
+      # 编译统计脚本
+      - name: 编译统计脚本
+        run: cargo build --release --manifest-path scripts/Cargo.toml
 
       # 确定目标用户
       - name: 确定目标用户
@@ -97,7 +105,7 @@ jobs:
           fi
 
           # 运行脚本，带超时和错误处理
-          timeout 25m python3 scripts/generate-stats.py --mode actions || {
+          timeout 25m scripts/target/release/generate-stats --mode actions || {
             echo "❌ 统计生成失败或超时"
             echo "📋 检查部分结果..."
             if [ -f "README.md" ]; then
