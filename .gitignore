@@ -1,3 +1,6 @@
+# Rust 构建产物
+scripts/target/
+
 # Python 缓存文件
 __pycache__/
 *.py[cod]
