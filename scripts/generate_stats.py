@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import os
 import re
@@ -664,44 +665,52 @@ def collect_user_commits(
 
 
 def collect_commit_details(repo_path: Path, shas: list[str]) -> dict[str, dict]:
-    """逐个 commit 取增删行数与文件状态（--shortstat + --name-status）。"""
+    """一次 git log 批量取所有目标 commit 的增删行数与文件状态。
+
+    取代原先「每 commit 2 次 git show」，进程数从 2N 降到 1。
+    """
+    if not shas:
+        return {}
+
+    fmt = f"{FS}%H{FS}%aI"
+    out, code = run_git(
+        ["log", "--raw", "--numstat", "--no-walk", "--stdin", f"--format={fmt}"],
+        cwd=repo_path,
+        stdin_data="\n".join(shas) + "\n",
+    )
+    if code != 0:
+        return {}
+
     details: dict[str, dict] = {}
-    for sha in shas:
-        entry: dict = {"additions": 0, "deletions": 0, "files": []}
-
-        out, code = run_git(
-            ["show", "--shortstat", "--pretty=format:", sha], cwd=repo_path
-        )
-        if code == 0:
-            for line in out.split("\n"):
-                text = line.strip()
-                if "changed" in text and ("insertion" in text or "deletion" in text):
-                    ins = re.search(r"(\d+) insertion", text)
-                    dele = re.search(r"(\d+) deletion", text)
-                    if ins:
-                        entry["additions"] = int(ins.group(1))
-                    if dele:
-                        entry["deletions"] = int(dele.group(1))
-                    break
-
-        out, code = run_git(
-            ["show", "--name-status", "--pretty=format:", sha], cwd=repo_path
-        )
-        if code == 0:
-            for line in out.split("\n"):
-                parts = line.split("\t")
-                if len(parts) < 2:
-                    continue
-                status_code = parts[0].rstrip("0123456789")
-                if status_code in ("R", "C") and len(parts) >= 3:
-                    filename = parts[2]
-                    status = "added" if status_code == "C" else "modified"
-                else:
-                    filename = parts[1]
-                    status = "added" if parts[0] == "A" else "modified"
-                entry["files"].append({"filename": filename, "status": status})
-
-        details[sha] = entry
+    current: str | None = None
+    for line in out.split("\n"):
+        if line.startswith(FS):
+            current = line[1:].split(FS)[0]
+            details[current] = {"additions": 0, "deletions": 0, "files": []}
+            continue
+        if current is None or not line:
+            continue
+        if line.startswith(":"):
+            # :<srcmode> <dstmode> <srcsha> <dstsha> <status>\t<path>[\t<oldpath>]
+            fields = line[1:].split("\t")
+            meta = fields[0].split()
+            status = meta[-1].rstrip("0123456789") if meta else ""
+            path = (
+                fields[2]
+                if len(fields) >= 3
+                else (fields[1] if len(fields) >= 2 else "")
+            )
+            if path:
+                kind = "added" if status in ("A", "C") else "modified"
+                details[current]["files"].append({"filename": path, "status": kind})
+        elif "\t" in line:
+            additions, deletions, _path = line.split("\t", 2)
+            if additions != "-":
+                with contextlib.suppress(ValueError):
+                    details[current]["additions"] += int(additions)
+            if deletions != "-":
+                with contextlib.suppress(ValueError):
+                    details[current]["deletions"] += int(deletions)
     return details
 
 
