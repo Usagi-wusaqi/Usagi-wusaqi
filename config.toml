@@ -1,4 +1,4 @@
-# generate-stats.py 配置
+# generate_stats.py 配置
 # 除 author_identities 由脚本自动学习和更新外，其余均可手动编辑
 
 # 作者身份（Base64 编码的 JSON，由脚本自动学习和更新，勿手动修改）

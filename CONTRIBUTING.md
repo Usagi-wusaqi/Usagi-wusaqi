@@ -5,7 +5,7 @@
 ## 📋 目录
 
 1. [快速开始](#快速开始)
-2. [运行模式](#运行模式)
+2. [运行流程](#运行流程)
 3. [模板系统](#模板系统)
 4. [核心特性](#核心特性)
 5. [配置说明](#配置说明)
@@ -41,40 +41,36 @@
 
 ### 本地运行
 
+> **前置要求：** Python 3.11+（用到标准库 `tomllib`）。脚本零第三方依赖，无需安装任何包，也无需编译。
+
 ```bash
 export GH_TOKEN="your-github-token"
-python scripts/generate-stats.py               # 默认 actions 模式：生成本地 SVG 卡片
-python scripts/generate-stats.py --mode api     # api 模式：仅生成 config.toml，SVG 由 Vercel 实时渲染
+python scripts/generate_stats.py               # 生成本地 SVG 卡片 + 更新 README
 
 # 可选参数
-python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（不会重新生成统计）
+python scripts/generate_stats.py --clear-cache # 清除缓存后直接退出（不会重新生成统计）
+python scripts/generate_stats.py --help        # 显示帮助信息
 ```
 
-> **注意：** 脚本同时统计代码行数（additions/deletions）和图片数。`--mode actions`（默认）会生成本地 `contributions.svg` 卡片；`--mode api` 仅生成 `config.toml` 供 Vercel 卡片读取。
+> **注意：** 脚本同时统计代码行数（additions/deletions）和图片数，并生成本地 `contributions.svg` 卡片。
 
 ---
 
-## 🔀 运行模式
-
-### 概述
-
-项目支持两种运行模式，通过 `--mode` 参数切换：
-
-| 模式 | 命令 | SVG 来源 | 适用场景 |
-|------|------|----------|----------|
-| **actions**（默认） | `--mode actions` | 本地生成 `contributions.svg` | GitHub Actions 定时任务 |
-| **api** | `--mode api` | Vercel Serverless 实时渲染 | 需要实时数据 |
+## 🔀 运行流程
 
 ### 数据流架构
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  process_repos()                                        │
+│  process_repos()          （仓库级线程池并发）           │
 │  ┌───────────────────┐                                  │
-│  │ 逐仓库:           │                                  │
-│  │ clone → git log   │──→  _process_all_commits()       │
-│  │ → analyze_commits │      ├─ 缓存命中: 跳过           │
-│  │                   │      └─ 缓存未命中: git show     │
+│  │ 逐仓库:           │──→  analyze_repo()               │
+│  │ clone（全量历史） │      ├─ git log #1: commit 元数据 │
+│  │                   │      │  （sha/日期/作者，Python  │
+│  │                   │      │   侧按身份过滤）          │
+│  │                   │      ├─ 缓存命中: 跳过           │
+│  │                   │      └─ git log #2: 批量取       │
+│  │                   │         未命中的增删行与文件状态 │
 │  └───────────────────┘           ↓                      │
 │                            save_cache()                  │
 │                            (按仓库 commit 列表 →        │
@@ -89,20 +85,14 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（
 │        total_images, latest_commit_timestamp}            │
 └─────────────────────────────────────────────────────────┘
                               ↓
-                        save_stats_json()
+                        aggregate_stats_from_cache()
                               ↓
-                ┌─────────────┴─────────────┐
-                │                           │
-        actions 模式                   api 模式
-    save_contributions_svg()     (Vercel 读取 config.toml)
-    → contributions.svg              → 实时 SVG
-                │                           │
-                └─────────────┬─────────────┘
+                    save_contributions_svg()
+                       → contributions.svg
                               ↓
                       update_readme()
                 ({{CONTRIBUTIONS_CARD_SRC}} →
-                 actions: contributions.svg
-                 api: Vercel URL)
+                    contributions.svg)
 ```
 
 ### 缓存文件格式
@@ -122,12 +112,14 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（
 
 ### config.toml 格式
 
-两行格式：第一行 `_comment`（静态），第二行数据字段（动态，git diff 只变这行）。`last_updated` 使用最新 commit 的 ISO 8601 时间戳（而非脚本运行时间），这样没有新代码时文件内容不变 → git 无 diff → 不产生提交。
+采集脚本的配置集中在仓库根目录的 `config.toml`，共四部分：
 
-```json
-{"_comment":"generate-stats.py 自动生成。Vercel API 读取 total_images；Actions SVG 读取全部字段",
-"total_additions":12345,"total_deletions":6789,"total_images":42,"last_updated":"2024-01-15T10:30:00+08:00"}
-```
+| 键 / 段 | 作用 |
+| ------- | ---- |
+| `author_identities` | Base64 编码的身份列表，由脚本自动学习并原地写回（保留注释与格式） |
+| `[api]` | GitHub API 基址、分页大小、最大页数与配额告警阈值 |
+| `[svg]` | 卡片标题、配色、布局与字体（含 `custom_title`、`layout`、`font`、`labels`） |
+| `[behavior]` | 进度打印间隔、分隔线宽度、并发仓库数 `concurrency`、图片扩展名 |
 
 ---
 
@@ -159,7 +151,7 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（
 | ------ | ---- | ---- |
 | `{{ORIGIN_USERNAME}}` | 远端用户名 | `your-username` |
 | `{{UPSTREAM_USERNAME}}` | 上游用户名 | `upstream-username` |
-| `{{CONTRIBUTIONS_CARD_SRC}}` | 贡献卡片图片源 | actions 模式: `contributions.svg`<br>api 模式: Vercel URL |
+| `{{CONTRIBUTIONS_CARD_SRC}}` | 贡献卡片图片源 | `contributions.svg` |
 
 ### 使用示例
 
@@ -183,7 +175,6 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（
 
 ### 🚀 自动化与智能化
 - **GitHub Actions 集成** - 手动触发或每日北京时间 23:59 定时自动更新
-- **运行模式** - actions 模式（本地 SVG）和 api 模式（Vercel 实时渲染）可切换
 - **智能缓存系统** - 95%+ 缓存命中率，显著提升运行速度
 - **增量更新** - 只处理新增的 commits，避免重复分析
 - **保守缓存** - 默认追加/更新并按 commit URL 去重；需要彻底重建时使用 `--clear-cache`
@@ -191,7 +182,7 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（
 - **自动压缩提交** - 连续的统计工作流提交会自动压缩到上一条统计提交，避免机器人提交刷屏
 
 ### 📊 数据统计
-- **代码行数** - 统计每个 commit 的 additions 和 deletions（通过 `git show --shortstat`）
+- **代码行数** - 统计每个 commit 的 additions 和 deletions（通过 `git log --numstat` 逐文件求和）
 - **图片资源** - 统计图片文件（.png, .jpg, .jpeg, .gif, .svg, .webp, .ico, .bmp）
 - **Git log 优先** - 优先使用本地 git log（完整历史），API 仅在失败时兜底
 - **分层数据流** - `scripts/stats_cache/<repo>.json` → 汇总统计 → SVG 卡片 / README
@@ -204,7 +195,8 @@ python scripts/generate-stats.py --clear-cache  # 清除缓存后直接退出（
 - **上游创建者保留** - 保留上游创建者信息，便于识别来源
 
 ### 🔧 技术优势
-- **零依赖** - 只使用 Python 标准库，无需额外安装
+- **零依赖零编译** - 仅用 Python 标准库（tomllib / json / urllib / subprocess），无需安装任何包，改完即可直接运行
+- **子进程极少** - 每个仓库只需 2 次 git 调用（1 次取 commit 元数据、1 次批量取 diff 统计），取代原先每个 commit 2 次 `git show`
 - **容错性强** - git log 失败时自动降级使用 API 兜底
 - **格式保持** - 从模板生成 README，保持布局一致；回退模式用正则精确替换
 
@@ -287,12 +279,12 @@ env:
 
 ### 性能表现
 
-| 场景 | 预期时间 | 说明 |
-| ---- | -------- | ---- |
-| 首次运行 | 2-10 分钟 | 取决于仓库数量和 commit 历史 |
-| 日常更新 | 30-60 秒 | 95%+ 缓存命中率，增量获取新 commits |
-| 清除缓存后 | 2-10 分钟 | 需要重新分析所有数据（每个 commit 执行 git show） |
-| API 限流时 | 无明显影响 | 主要使用 git log，API 仅兜底 |
+| 场景 | 说明 |
+| ---- | ---- |
+| 首次运行 | 取决于仓库数量与 commit 历史；每个仓库固定 2 次 git 调用 |
+| 日常更新 | 95%+ 缓存命中率，只需拉取增量 commits |
+| 清除缓存后 | 与首次运行相近，靠批量 `git log` 一次性取完 |
+| API 限流时 | 无明显影响，主要使用本地 git log，API 仅兜底 |
 
 ---
 
@@ -304,7 +296,7 @@ env:
 1. 初始化 → 2. 获取仓库列表 → 3. 处理每个仓库 → 4. 汇总统计 → 5. 输出结果 → 6. 清理
    ↓              ↓                ↓               ↓              ↓            ↓
 环境变量       GitHub API     clone+分析+缓存   aggregate_     config.toml   临时文件
---mode参数                                      stats_from_    SVG卡片
+                                                 stats_from_    SVG卡片
                                                  cache()       README.md
 ```
 
@@ -322,24 +314,11 @@ env:
 
 ### SVG 贡献卡片
 
-贡献统计展示为 SVG 卡片，支持两种生成方式：
-
-#### Actions 模式（默认）
-
 - **生成方式** - Python 脚本 `generate_contributions_svg()` 直接生成 `contributions.svg`
 - **数据来源** - `aggregate_stats_from_cache()` 汇总的 `StatsData`
 - **展示** - 水平四列布局（Additions / Deletions / Net / Images），1200×200
+- **自定义** - 通过 `config.toml` 的 `[svg]` 段配置 `custom_title`、`title_color`、`text_color`、`bg_color` 等
 - **触发** - GitHub Actions 每日自动生成并提交到仓库
-
-#### API 模式
-
-- **端点** - `/api/contributions?username=xxx`
-- **数据源** - GitHub Stats/Contributors API 汇总代码贡献；`config.toml`（由脚本生成）提供图片统计
-- **展示** - 同样四列布局，viewBox 1200×200
-- **标题** - 自动从 GitHub API 获取 display name
-- **自定义** - 支持 `custom_title`、`title_color`、`text_color`、`bg_color`、`hide_border` 等参数
-- **缓存** - 通过 `cache_seconds` 参数控制（默认 86400 秒）
-- **部署** - 需要在 Vercel 项目中配置 `PAT_1` 环境变量（GitHub PAT）
 
 ### 缓存机制
 
@@ -408,7 +387,7 @@ env:
 ls -la scripts/stats_cache/
 
 # 查看缓存统计信息（会显示缓存命中率）
-python scripts/generate-stats.py
+python scripts/generate_stats.py
 
 # 首次运行耐心等待，后续会很快（95%+ 缓存命中率）
 ```
@@ -435,20 +414,16 @@ curl -H "Authorization: token $GH_TOKEN" https://api.github.com/rate_limit
 
 ```bash
 # 查看详细输出
-python scripts/generate-stats.py
-
-# 运行模式
-python scripts/generate-stats.py                # 默认 actions 模式
-python scripts/generate-stats.py --mode api      # api 模式（仅生成 config.toml）
+python scripts/generate_stats.py
 
 # 清除缓存（仅清除，不会重新运行统计）
-python scripts/generate-stats.py --clear-cache
+python scripts/generate_stats.py --clear-cache
 
 # 清除缓存后重新运行（需要两条命令）
-python scripts/generate-stats.py --clear-cache && python scripts/generate-stats.py
+python scripts/generate_stats.py --clear-cache && python scripts/generate_stats.py
 
 # 显示帮助信息
-python scripts/generate-stats.py --help
+python scripts/generate_stats.py --help
 ```
 
 ### 支持的图片格式
