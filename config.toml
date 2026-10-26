@@ -15,15 +15,6 @@ per_page = 100
 # 剩余配额低于此值时打印警告
 rate_limit_warn_threshold = 50
 
-# ---- Vercel 部署 ----
-[vercel]
-# Vercel 部署域名（用于 api 模式生成 README 中的卡片链接）
-base_url = "https://usagi-wusaqi.vercel.app"
-# SVG 卡片是否隐藏边框
-hide_border = true
-# Vercel CDN 缓存时间（秒）
-cache_seconds = 86400
-
 # ---- SVG 卡片 ----
 [svg]
 # 卡片标题文本（设为空字符串则不显示标题）

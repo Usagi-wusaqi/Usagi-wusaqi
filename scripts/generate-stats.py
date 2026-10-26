@@ -1704,32 +1704,12 @@ def update_usernames_in_readme(content: str) -> str:
     return content
 
 
-def generate_readme_from_template(template_path: Path, *, mode: str = "actions") -> str:
+def generate_readme_from_template(template_path: Path) -> str:
     """从模板生成 README 内容"""
     with template_path.open(encoding="utf-8") as f:
         content = f.read()
 
-    # 根据模式选择贡献卡片来源
-    if mode == "actions":
-        card_src = "contributions.svg"
-    else:
-        vercel = cfg.get("vercel", {})
-        base_url = vercel.get("base_url", "")
-        hide_border = vercel.get("hide_border", True)
-        cache_seconds = vercel.get("cache_seconds", 86400)
-
-        custom_title = cfg.get("svg", {}).get("custom_title")
-        title_param = (
-            f"&custom_title={urllib.parse.quote(custom_title)}"
-            if custom_title is not None
-            else ""
-        )
-        hide_param = "&hide_border=true" if hide_border else ""
-        card_src = (
-            f"{base_url}/api/contributions"
-            f"?username={ORIGIN_USERNAME}"
-            f"{hide_param}{title_param}&cache_seconds={cache_seconds}"
-        )
+    card_src = "contributions.svg"
 
     # 准备替换数据
     replacements = {
@@ -1778,7 +1758,7 @@ def print_update_summary(stats: StatsData) -> None:
     print_color(f"   👑 上游用户名: {UPSTREAM_USERNAME}", Colors.NC)
 
 
-def update_readme(stats: StatsData, *, mode: str = "actions") -> bool:
+def update_readme(stats: StatsData) -> bool:
     """更新 README.md（支持模板系统）
 
     功能：
@@ -1789,7 +1769,6 @@ def update_readme(stats: StatsData, *, mode: str = "actions") -> bool:
 
     参数：
     - stats: 统计数据字典
-    - mode: 运行模式 (actions/api)
     """
     print_color("📝 更新 README.md...", Colors.YELLOW)
 
@@ -1798,7 +1777,7 @@ def update_readme(stats: StatsData, *, mode: str = "actions") -> bool:
     if template_path.exists():
         # 使用模板系统
         print_color("📄 使用模板系统生成 README", Colors.GREEN)
-        content = generate_readme_from_template(template_path, mode=mode)
+        content = generate_readme_from_template(template_path)
     else:
         # 回退：仅更新用户名
         print_color("⚠️  未发现模板文件，更新现有 README", Colors.YELLOW)
@@ -1848,7 +1827,7 @@ def generate_contributions_svg(
     stats: StatsData,
     display_name: str,
 ) -> str:
-    """生成贡献统计 SVG 卡片（与 Vercel 版本 renderContributionsCard 对齐）
+    """生成贡献统计 SVG 卡片
 
     颜色、尺寸、标题等均从 cfg["svg"] 读取。
     """
@@ -1956,12 +1935,6 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description="生成 GitHub 统计")
     parser.add_argument("--clear-cache", action="store_true", help="清除缓存文件")
-    parser.add_argument(
-        "--mode",
-        choices=["actions", "api"],
-        default="actions",
-        help="运行模式: actions=生成本地SVG+更新README, api=仅更新README (默认: actions)",
-    )
     args = parser.parse_args()
 
     # 加载集中配置
@@ -1970,7 +1943,6 @@ def main() -> int:
 
     print_separator("🚀 开始生成 GitHub 统计...")
     print_color("📊 统计配置:", Colors.YELLOW)
-    print_color(f"   - 运行模式: {args.mode}", Colors.NC)
     print_color(f"   - 缓存目录: {CACHE_DIR}", Colors.NC)
     print_separator()
 
@@ -2022,14 +1994,13 @@ def main() -> int:
     print_color(f"  🖼️  总 images: {imgs:,}", Colors.GREEN)
     print_separator()
 
-    # Actions 模式：生成并保存 SVG 卡片
-    if args.mode == "actions":
-        svg_content = generate_contributions_svg(stats, ORIGIN_USERNAME)
-        if not save_contributions_svg(svg_content):
-            return 1
+    # 生成并保存 SVG 卡片
+    svg_content = generate_contributions_svg(stats, ORIGIN_USERNAME)
+    if not save_contributions_svg(svg_content):
+        return 1
 
     # 更新 README.md
-    if not update_readme(stats, mode=args.mode):
+    if not update_readme(stats):
         return 1
 
     print_separator("✅ 脚本执行完成！")

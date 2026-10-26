@@ -97,7 +97,7 @@ jobs:
           fi
 
           # 运行脚本，带超时和错误处理
-          timeout 25m python3 scripts/generate-stats.py --mode actions || {
+          timeout 25m python3 scripts/generate-stats.py || {
             echo "❌ 统计生成失败或超时"
             echo "📋 检查部分结果..."
             if [ -f "README.md" ]; then
