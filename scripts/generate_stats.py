@@ -43,6 +43,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 
 # 记录分隔符：\x01 分隔字段，\x1f 分隔多个 trailer（均不会出现在正常文本中）
+FS = "\x01"
+TS = "\x1f"
 
 DEFAULT_CONCURRENCY = 6
 DEFAULT_SEPARATOR_LENGTH = 60
@@ -608,32 +610,56 @@ def default_branch_of(repo_path: Path) -> tuple[str, str]:
     return remote, "main"
 
 
+def _commit_meta_format() -> str:
+    return f"{FS}%H{FS}%aI{FS}%an{FS}%ae{FS}%(trailers:key=Co-authored-by,valueonly=true,separator={TS})"
+
+
 def collect_user_commits(
     repo_path: Path, remote: str, branch: str, identities: list[str]
 ) -> list[tuple[str, str]]:
-    """按身份逐个执行 git log：作者与 Co-authored-by 分别匹配后去重。"""
-    if not identities:
+    """一次 git log 拿到全部 commit 元数据，在 Python 侧按身份过滤。
+
+    取代原先「每个身份 × 2 个 flag」的多次全历史扫描（4 身份 = 8 次 git log）。
+    """
+    out, code = run_git(
+        ["log", f"{remote}/{branch}", f"--format={_commit_meta_format()}"],
+        cwd=repo_path,
+    )
+    if code != 0:
         return []
 
-    seen: set[str] = set()
+    wanted = {i.lower() for i in identities}
+    if not wanted:
+        return []
+
     result: list[tuple[str, str]] = []
-    for author in identities:
-        safe = author.replace('"', '\\"')
-        for flag in (f"--author={safe}", f"--grep=Co-authored-by: {safe}"):
-            out, code = run_git(
-                ["log", f"{remote}/{branch}", flag, "--format=%H%n%aI"], cwd=repo_path
-            )
-            if code != 0:
-                continue
-            lines = [line.strip() for line in out.split("\n") if line.strip()]
-            for i in range(0, len(lines), 2):
-                if i + 1 >= len(lines):
+    seen: set[str] = set()
+    for line in out.split("\n"):
+        if not line.startswith(FS):
+            continue
+        parts = line[1:].split(FS)
+        if len(parts) < 5:
+            continue
+        sha, date, name, email, trailers = (
+            parts[0],
+            parts[1],
+            parts[2],
+            parts[3],
+            parts[4],
+        )
+        if sha in seen:
+            continue
+
+        author_id = f"{name} <{email}>".lower()
+        matched = author_id in wanted
+        if not matched and trailers:
+            for item in trailers.split(TS):
+                if item.strip().lower() in wanted:
+                    matched = True
                     break
-                sha = lines[i]
-                if sha in seen:
-                    continue
-                seen.add(sha)
-                result.append((sha, lines[i + 1]))
+        if matched:
+            seen.add(sha)
+            result.append((sha, date))
     return result
 
 
