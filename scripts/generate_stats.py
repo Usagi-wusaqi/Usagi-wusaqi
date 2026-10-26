@@ -28,6 +28,7 @@ import sys
 import threading
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -1424,8 +1425,10 @@ def process_repos(app: App, repos: list[dict]) -> bool:
 
     active_repo_names: set[str] = set()
     processed_targets: set[str] = set()
-    any_changed = False
+    jobs: list[Job] = []
 
+    # ---- Phase A（并发预筛）：解析上游 + 探测提交 + 学习身份 ----
+    preflight: list[tuple[dict, str, str, str, Log]] = []
     for repo in repos:
         repo_name = repo.get("name")
         repo_url = repo.get("html_url")
@@ -1460,24 +1463,66 @@ def process_repos(app: App, repos: list[dict]) -> bool:
             continue
         processed_targets.add(target_key)
 
-        items = probe_user_commits(app, clone_owner, target_name)
-        if items is not None:
-            learn_identities(app, items, log)
-        if items is not None and not items and not app.cache_file(target_name).exists():
-            log.color("  ⏭️  该仓库无用户提交，跳过克隆", NC)
-            log.flush()
-            continue
-
-        job = Job(
-            log=log,
-            repo_path=temp_dir / target_name,
-            owner=clone_owner,
-            repo_name=target_name,
-            clone_url=clone_url,
+        preflight.append(
+            (
+                {
+                    "owner": clone_owner,
+                    "name": target_name,
+                    "clone_url": clone_url,
+                    "repo_path": temp_dir / target_name,
+                },
+                clone_owner,
+                target_name,
+                clone_url,
+                log,
+            )
         )
-        if process_job(app, job, temp_dir):
-            any_changed = True
-        log.flush()
+
+    # 并发探测（受限于 GitHub 二级限流，并发度取仓库并发度的一半，至少 2）
+    concurrency = max(
+        int(
+            app.behavior.get("concurrency", DEFAULT_CONCURRENCY) or DEFAULT_CONCURRENCY
+        ),
+        1,
+    )
+    probe_workers = max(min(concurrency, len(preflight)) // 2, 1) if preflight else 1
+    probe_workers = min(probe_workers, 4)
+
+    def probe(item):
+        meta, owner, name, _clone_url, log = item
+        items = probe_user_commits(app, owner, name)
+        return meta, items, log
+
+    if preflight:
+        with ThreadPoolExecutor(max_workers=probe_workers) as pool:
+            results = list(pool.map(probe, preflight))
+
+        for meta, items, log in results:
+            owner = meta["owner"]
+            name = meta["name"]
+            if items is not None:
+                learn_identities(app, items, log)
+            if items is not None and not items and not app.cache_file(name).exists():
+                log.color("  ⏭️  该仓库无用户提交，跳过克隆", NC)
+                log.flush()
+                continue
+            jobs.append(
+                Job(
+                    log=log,
+                    repo_path=meta["repo_path"],
+                    owner=owner,
+                    repo_name=name,
+                    clone_url=meta["clone_url"],
+                )
+            )
+
+    # ---- Phase B（并发）：克隆 + 分析 ----
+    any_changed = False
+    if jobs:
+        workers = max(min(concurrency, len(jobs)), 1)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for changed in pool.map(lambda job: process_job(app, job, temp_dir), jobs):
+                any_changed = any_changed or bool(changed)
 
     print_color("\n  🧹 清理临时文件...", YELLOW)
     if temp_dir.exists():

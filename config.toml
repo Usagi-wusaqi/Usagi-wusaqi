@@ -87,3 +87,5 @@ image_extensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp", ".
 progress_interval = 10
 # 控制台分隔线宽度（字符数）
 separator_length = 60
+# 并发处理的仓库数（GitHub 侧为网络等待型任务，无需设太高）
+concurrency = 6
