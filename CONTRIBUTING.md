@@ -48,7 +48,7 @@ export GH_TOKEN="your-github-token"
 python scripts/generate_stats.py               # 生成本地 SVG 卡片 + 更新 README
 
 # 可选参数
-python scripts/generate_stats.py --clear-cache # 清除缓存后直接退出（不会重新生成统计）
+python scripts/generate_stats.py --clear-cache # 清除统计缓存与本地克隆后直接退出（不会重新生成统计）
 python scripts/generate_stats.py --help        # 显示帮助信息
 ```
 
@@ -282,7 +282,7 @@ env:
 | 场景 | 说明 |
 | ---- | ---- |
 | 首次运行 | 取决于仓库数量与 commit 历史；每个仓库固定 2 次 git 调用 |
-| 日常更新 | 95%+ 缓存命中率，只需拉取增量 commits |
+| 日常更新 | 95%+ 缓存命中率，只需拉取增量 commits；复用的克隆里已包含上次取过的 blob |
 | 清除缓存后 | 与首次运行相近，靠批量 `git log` 一次性取完 |
 | API 限流时 | 无明显影响，主要使用本地 git log，API 仅兜底 |
 
@@ -293,10 +293,10 @@ env:
 ### 工作流程
 
 ```text
-1. 初始化 → 2. 获取仓库列表 → 3. 处理每个仓库 → 4. 汇总统计 → 5. 输出结果 → 6. 清理
+1. 初始化 → 2. 获取仓库列表 → 3. 处理每个仓库 → 4. 汇总统计 → 5. 输出结果 → 6. 清理失效项
    ↓              ↓                ↓               ↓              ↓            ↓
-环境变量       GitHub API     clone+分析+缓存   aggregate_     config.toml   临时文件
-                                                 stats_from_    SVG卡片
+环境变量       GitHub API     clone+分析+缓存   aggregate_     config.toml   陈旧缓存
+                                                 stats_from_    SVG卡片       多余克隆
                                                  cache()       README.md
 ```
 
@@ -327,6 +327,15 @@ env:
 - **永久保存** - 保留比当前最老 commit 更久远的历史数据
 - **缓存格式** - 每条记录保存 `timestamp`、`index`、`additions`、`deletions`、`images` 和 commit `url`
 - **多文件缓存** - `aggregate_stats_from_cache()` 读取各仓库缓存的 `_metadata` 并汇总统计
+
+### 本地克隆复用
+
+`temp_repos/` 用于存放每个仓库的 blobless 克隆，运行结束后保留：
+
+- **增量拉取** - 先比对远端分支的 commit SHA，未变化时一次网络往返即可，不触发对象协商
+- **复用已取的文件** - 计算增删行数时按需拉取的 blob 会留在本地，下次运行无需重新下载
+- **Actions 缓存** - 工作流用 `actions/cache` 保存该目录，缓存命中后耗时与仓库历史规模无关
+- **失效重建** - 更新失败或目录损坏时自动删除并重新克隆
 
 ### 作者身份管理
 
@@ -416,7 +425,7 @@ curl -H "Authorization: token $GH_TOKEN" https://api.github.com/rate_limit
 # 查看详细输出
 python scripts/generate_stats.py
 
-# 清除缓存（仅清除，不会重新运行统计）
+# 清除统计缓存与本地克隆（仅清除，不会重新运行统计）
 python scripts/generate_stats.py --clear-cache
 
 # 清除缓存后重新运行（需要两条命令）

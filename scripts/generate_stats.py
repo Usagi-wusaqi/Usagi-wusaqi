@@ -597,11 +597,56 @@ def run_git(args: list[str], cwd: Path | None = None, stdin_data: str | None = N
     return out, code
 
 
+def branch_sha(repo_path: Path, remote: str, branch: str, *, at_remote: bool) -> str:
+    """取分支的 commit SHA，可指定取本地记录还是远端当前值。"""
+    if not at_remote:
+        out, code = run_git(
+            ["rev-parse", f"refs/remotes/{remote}/{branch}"], cwd=repo_path
+        )
+        return out.strip() if code == 0 else ""
+
+    out, code = run_git(["ls-remote", "--heads", remote, branch], cwd=repo_path)
+    if code != 0:
+        return ""
+    expected = f"refs/heads/{branch}"
+    for line in out.splitlines():
+        sha, _, ref = line.partition("\t")
+        if ref.strip() == expected:
+            return sha.strip()
+    return ""
+
+
 def clone_or_update(repo_path: Path, clone_url: str, log: Log) -> bool:
     if repo_path.exists():
-        log.color("  🔄 更新本地仓库...", YELLOW)
-        run_git(["fetch", "origin"], cwd=repo_path)
-        return True
+        remote = remote_name_of(repo_path)
+        # 上游可能改名或转让，让远端地址始终跟随当前仓库
+        run_git(["remote", "set-url", remote, clone_url], cwd=repo_path)
+        _, branch = default_branch_of(repo_path, remote)
+        local_sha = branch_sha(repo_path, remote, branch, at_remote=False)
+        # 只比对远端分支的 SHA，没有新提交时一次网络往返即可，不触发对象协商
+        if local_sha and local_sha == branch_sha(
+            repo_path, remote, branch, at_remote=True
+        ):
+            log.color("  ✅ 已是最新", GREEN)
+            return True
+        log.color("  🔄 拉取新增提交...", YELLOW)
+        # 显式 refspec：单分支克隆的默认 refspec 不会跟踪新分支，
+        # 上游改默认分支名后仍能把新分支拉到本地
+        _, code = run_git(
+            [
+                "fetch",
+                remote,
+                f"+refs/heads/{branch}:refs/remotes/{remote}/{branch}",
+                "--prune",
+                "--no-tags",
+            ],
+            cwd=repo_path,
+        )
+        if code == 0:
+            return True
+        # 本地克隆损坏、远端地址变更或网络中断：清掉重新克隆，避免沿用旧历史
+        log.color("  ⚠️  更新失败，重新克隆", YELLOW)
+        shutil.rmtree(repo_path, ignore_errors=True)
 
     log.color("  📥 克隆仓库...", YELLOW)
     # 统计只需要 commit 与 tree 对象；文件内容（blob）只在缓存未命中的少数 commit
@@ -640,13 +685,23 @@ def remote_name_of(repo_path: Path) -> str:
     return names[0] if names else "origin"
 
 
-def default_branch_of(repo_path: Path) -> tuple[str, str]:
-    """返回 (远程名, 默认分支)。"""
-    remote = remote_name_of(repo_path)
-    out, code = run_git(["symbolic-ref", f"refs/remotes/{remote}/HEAD"], cwd=repo_path)
+def default_branch_of(repo_path: Path, remote: str | None = None) -> tuple[str, str]:
+    """返回 (远程名, 默认分支)。本地记录缺失时向远端查询一次。"""
+    remote = remote or remote_name_of(repo_path)
     prefix = f"refs/remotes/{remote}/"
+    out, code = run_git(["symbolic-ref", f"refs/remotes/{remote}/HEAD"], cwd=repo_path)
     if code == 0 and out.startswith(prefix):
         return remote, out[len(prefix) :]
+
+    # 本地没有记录符号引用时问远端，避免把 master 默认分支错猜成 main
+    out, code = run_git(["ls-remote", "--symref", remote, "HEAD"], cwd=repo_path)
+    if code == 0:
+        for line in out.splitlines():
+            # 形如 `ref: refs/heads/main\tHEAD`
+            if line.startswith("ref:"):
+                ref = line[4:].split()[0]
+                if ref.startswith("refs/heads/"):
+                    return remote, ref[len("refs/heads/") :]
     return remote, "main"
 
 
@@ -1558,14 +1613,17 @@ def process_repos(app: App, repos: list[dict]) -> bool:
             for changed in pool.map(lambda job: process_job(app, job, temp_dir), jobs):
                 any_changed = any_changed or bool(changed)
 
-    print_color("\n  🧹 清理临时文件...", YELLOW)
+    # 本地克隆保留给下次运行复用，只清掉本轮不再出现的仓库
+    kept = {job.repo_path.name for job in jobs}
     if temp_dir.exists():
-        import shutil
-
-        try:
-            shutil.rmtree(temp_dir)
-        except OSError as exc:
-            print_color(f"  ⚠️  清理临时目录失败: {exc}", YELLOW)
+        for path in sorted(temp_dir.iterdir()):
+            if path.is_dir():
+                if path.name in kept:
+                    continue
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                with contextlib.suppress(OSError):
+                    path.unlink()
 
     if active_repo_names and cleanup_stale_cache_files(app, active_repo_names):
         any_changed = True
@@ -1628,8 +1686,6 @@ def run() -> int:
     if clear_cache:
         if app.cache_dir.exists():
             print_color(f"🗑️  清除缓存目录: {app.cache_dir}", YELLOW)
-            import shutil
-
             try:
                 shutil.rmtree(app.cache_dir)
                 print_color("✅ 缓存已清除", GREEN)
@@ -1638,6 +1694,15 @@ def run() -> int:
                 return 1
         else:
             print_color(f"ℹ️  缓存目录不存在: {app.cache_dir}", NC)
+        repos_dir = PROJECT_ROOT / "temp_repos"
+        if repos_dir.exists():
+            print_color(f"🗑️  清除本地克隆: {repos_dir}", YELLOW)
+            try:
+                shutil.rmtree(repos_dir)
+                print_color("✅ 本地克隆已清除", GREEN)
+            except OSError as exc:
+                print_color(f"❌ 清除本地克隆失败: {exc}", RED)
+                return 1
         return 0
 
     if not token:
