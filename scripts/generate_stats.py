@@ -219,6 +219,7 @@ class App:
         self.origin_username = origin_username
         self.upstream_username = upstream_username
         self.token = token
+        set_git_auth(token)
 
         self.config_path = PROJECT_ROOT / "config.toml"
         self.readme_path = PROJECT_ROOT / "README.md"
@@ -548,22 +549,51 @@ def learn_identities(app: App, commits: list[dict], log: Log) -> None:
 # ============================================================================
 
 
-def run_git(args: list[str], cwd: Path | None = None, stdin_data: str | None = None):
+_GIT_AUTH: list[str] = []
+
+
+def set_git_auth(token: str) -> None:
+    """把令牌放进请求头而非仓库地址，避免写进 .git/config。
+
+    通过 `-c` 传入，取值为环境变量形式，子进程（含懒拉取 blob 的 fetch）
+    同样生效，仓库地址保持干净。
+    """
+    global _GIT_AUTH
+    if not token:
+        _GIT_AUTH = []
+        return
+    pair = base64.b64encode(f"x-access-token:{token}".encode()).decode("ascii")
+    _GIT_AUTH = [
+        "-c",
+        f"http.https://github.com/.extraheader=AUTHORIZATION: basic {pair}",
+    ]
+
+
+def _run_git_raw(
+    args: list[str], cwd: Path | None = None, stdin_data: str | None = None
+) -> tuple[str, str, int]:
+    """返回 (stdout, stderr, 退出码)，失败原因交给调用方决定是否展示。"""
     try:
         proc = subprocess.run(
-            ["git", *args],
+            ["git", *_GIT_AUTH, *args],
             cwd=str(cwd) if cwd else None,
             input=stdin_data,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            # 令牌无效时直接失败，不等待交互式输入
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
             timeout=900,
         )
-        return proc.stdout.strip(), proc.returncode
-    except Exception:
-        return "", 1
+        return proc.stdout.strip(), proc.stderr.strip(), proc.returncode
+    except Exception as exc:
+        return "", str(exc), 1
+
+
+def run_git(args: list[str], cwd: Path | None = None, stdin_data: str | None = None):
+    out, _, code = _run_git_raw(args, cwd, stdin_data)
+    return out, code
 
 
 def clone_or_update(
@@ -1445,13 +1475,11 @@ def process_repos(app: App, repos: list[dict]) -> bool:
             log.color(f"  📡 直接克隆上游仓库: {up_owner}/{up_name}", NC)
             clone_owner = up_owner
             target_name = up_name
-            clone_url = f"https://{app.token}@github.com/{up_owner}/{up_name}.git"
+            clone_url = f"https://github.com/{up_owner}/{up_name}.git"
         else:
             clone_owner = repo_owner_from_url(repo_url) or app.origin_username
             target_name = repo_name
-            clone_url = repo_url.replace(
-                "https://github.com/", f"https://{app.token}@github.com/"
-            )
+            clone_url = repo_url
 
         active_repo_names.add(target_name)
         target_key = f"{clone_owner}/{target_name}".lower()
