@@ -896,8 +896,36 @@ def get_details_from_api(app: App, owner: str, repo_name: str, sha: str) -> dict
 # ============================================================================
 
 
-def load_cache(app: App, repo_name: str, log: Log) -> dict[str, list[dict]]:
+def cache_meta_of(cache_file: Path) -> dict:
+    try:
+        data = json.loads(cache_file.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data.get("_metadata") or {}
+
+
+def cache_file_by_repo_id(app: App, repo_id: str) -> Path | None:
+    """按仓库数字 ID 找缓存文件。仓库改名后 ID 不变，可据此接续历史。"""
+    if not repo_id or not app.cache_dir.exists():
+        return None
+    for path in sorted_cache_files(app.cache_dir):
+        if str(cache_meta_of(path).get("repo_id") or "") == repo_id:
+            return path
+    return None
+
+
+def load_cache(
+    app: App, repo_name: str, log: Log, repo_id: str = ""
+) -> dict[str, list[dict]]:
     cache_file = app.cache_file(repo_name)
+    if not cache_file.exists() and repo_id:
+        previous = cache_file_by_repo_id(app, repo_id)
+        if previous is not None:
+            log.color(f"    🔀 沿用改名前的缓存: {previous.name}", YELLOW)
+            try:
+                previous.rename(cache_file)
+            except OSError:
+                cache_file = previous
     if not cache_file.exists():
         log.color(f"⚠️  加载缓存失败: {cache_file} 不存在", YELLOW)
         return {}
@@ -989,7 +1017,12 @@ def serialize_cache(metadata: dict, data: dict[str, list[dict]]) -> str:
 
 
 def save_cache(
-    app: App, repo_name: str, cache: dict[str, list[dict]], log: Log
+    app: App,
+    repo_name: str,
+    cache: dict[str, list[dict]],
+    log: Log,
+    repo_id: str = "",
+    full_name: str = "",
 ) -> bool:
     app.cache_dir.mkdir(parents=True, exist_ok=True)
     cache_file = app.cache_file(repo_name)
@@ -1016,6 +1049,11 @@ def save_cache(
         "total_images": total_images,
         "latest_commit_timestamp": latest_timestamp,
     }
+    # 仓库改名或转让后 ID 不变，用它接续缓存
+    if repo_id:
+        metadata["repo_id"] = repo_id
+    if full_name:
+        metadata["full_name"] = full_name
 
     serialized = serialize_cache(metadata, sorted_cache)
     try:
@@ -1114,11 +1152,20 @@ def sorted_cache_files(cache_dir: Path) -> list[Path]:
     return sorted(p for p in cache_dir.glob("*.json") if p.is_file())
 
 
-def cleanup_stale_cache_files(app: App, active_repo_names: set[str]) -> bool:
+def cleanup_stale_cache_files(
+    app: App, active_repo_names: set[str], active_repo_ids: set[str]
+) -> bool:
+    """删除已不在仓库列表中的缓存；改名/转让由 ID 识别，不会误删。"""
     if not app.cache_dir.exists() or not active_repo_names:
         return False
     changed = False
     for cache_file in sorted_cache_files(app.cache_dir):
+        meta = cache_meta_of(cache_file)
+        repo_id = str(meta.get("repo_id") or "")
+        # 任一条件命中即视为仍在统计范围内：多个 fork 指向同一上游时，
+        # 缓存里只记了其中一个 fork 的 ID，但文件名仍是活跃的上游名
+        if repo_id and repo_id in active_repo_ids:
+            continue
         if cache_file.stem in active_repo_names:
             continue
         try:
@@ -1172,11 +1219,17 @@ def aggregate_stats_from_cache(app: App) -> dict:
 
 
 def analyze_repo(
-    app: App, repo_path: Path | None, owner: str, repo_name: str, log: Log
+    app: App,
+    repo_path: Path | None,
+    owner: str,
+    repo_name: str,
+    log: Log,
+    repo_id: str = "",
+    full_name: str = "",
 ) -> bool:
     log.color("    📊 开始分析commits...", YELLOW)
 
-    cache = load_cache(app, repo_name, log)
+    cache = load_cache(app, repo_name, log, repo_id)
 
     remote, branch = default_branch_of(repo_path) if repo_path else ("origin", "main")
     if repo_path:
@@ -1289,7 +1342,7 @@ def analyze_repo(
     )
     log.color(f"      🖼️ 图片: {total_images} images", GREEN)
 
-    saved_changed = save_cache(app, repo_name, cache, log)
+    saved_changed = save_cache(app, repo_name, cache, log, repo_id, full_name)
     return cache_misses > 0 or stale_cleaned or saved_changed
 
 
@@ -1486,13 +1539,22 @@ def update_readme(app: App, stats: dict) -> bool:
 
 class Job:
     def __init__(
-        self, log: Log, repo_path: Path, owner: str, repo_name: str, clone_url: str
+        self,
+        log: Log,
+        repo_path: Path,
+        owner: str,
+        repo_name: str,
+        clone_url: str,
+        repo_id: str = "",
+        full_name: str = "",
     ) -> None:
         self.log = log
         self.repo_path = repo_path
         self.owner = owner
         self.repo_name = repo_name
         self.clone_url = clone_url
+        self.repo_id = repo_id
+        self.full_name = full_name
 
 
 def process_job(app: App, job: Job, temp_dir: Path) -> bool:
@@ -1500,7 +1562,15 @@ def process_job(app: App, job: Job, temp_dir: Path) -> bool:
     if not clone_or_update(job.repo_path, job.clone_url, log):
         log.flush()
         return False
-    changed = analyze_repo(app, job.repo_path, job.owner, job.repo_name, log)
+    changed = analyze_repo(
+        app,
+        job.repo_path,
+        job.owner,
+        job.repo_name,
+        log,
+        job.repo_id,
+        job.full_name,
+    )
     log.flush()
     return changed
 
@@ -1515,6 +1585,7 @@ def process_repos(app: App, repos: list[dict]) -> bool:
     temp_dir.mkdir(parents=True, exist_ok=True)
 
     active_repo_names: set[str] = set()
+    active_repo_ids: set[str] = set()
     processed_targets: set[str] = set()
     jobs: list[Job] = []
 
@@ -1543,6 +1614,11 @@ def process_repos(app: App, repos: list[dict]) -> bool:
             clone_url = repo_url
 
         active_repo_names.add(target_name)
+        repo_id = str(repo.get("id") or "")
+        full_name = str(repo.get("full_name") or f"{clone_owner}/{target_name}")
+        if repo_id:
+            active_repo_ids.add(repo_id)
+
         target_key = f"{clone_owner}/{target_name}".lower()
         if target_key in processed_targets:
             log.color(
@@ -1559,6 +1635,8 @@ def process_repos(app: App, repos: list[dict]) -> bool:
                     "name": target_name,
                     "clone_url": clone_url,
                     "repo_path": temp_dir / target_name,
+                    "repo_id": repo_id,
+                    "full_name": full_name,
                 },
                 clone_owner,
                 target_name,
@@ -1602,6 +1680,8 @@ def process_repos(app: App, repos: list[dict]) -> bool:
                     owner=owner,
                     repo_name=name,
                     clone_url=meta["clone_url"],
+                    repo_id=meta["repo_id"],
+                    full_name=meta["full_name"],
                 )
             )
 
@@ -1625,7 +1705,9 @@ def process_repos(app: App, repos: list[dict]) -> bool:
                 with contextlib.suppress(OSError):
                     path.unlink()
 
-    if active_repo_names and cleanup_stale_cache_files(app, active_repo_names):
+    if active_repo_names and cleanup_stale_cache_files(
+        app, active_repo_names, active_repo_ids
+    ):
         any_changed = True
 
     return any_changed

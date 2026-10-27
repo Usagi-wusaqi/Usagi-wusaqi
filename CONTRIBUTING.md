@@ -324,6 +324,7 @@ env:
 
 - **增量处理** - 只分析新增的 commits，避免重复分析
 - **仓库级缓存** - 每个仓库独立维护 commit 缓存；当前仓库列表里已经不存在的缓存文件会自动删除
+- **按 ID 识别** - 缓存里记录仓库的数字 `id`，仓库改名后自动接续原缓存，不重算；转让出去则随仓库列表移除
 - **永久保存** - 保留比当前最老 commit 更久远的历史数据
 - **缓存格式** - 每条记录保存 `timestamp`、`index`、`additions`、`deletions`、`images` 和 commit `url`
 - **多文件缓存** - `aggregate_stats_from_cache()` 读取各仓库缓存的 `_metadata` 并汇总统计
