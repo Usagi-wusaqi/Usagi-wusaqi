@@ -1,8 +1,5 @@
 # generate_stats.py 配置
-# 除 author_identities 由脚本自动学习和更新外，其余均可手动编辑
-
-# 作者身份（Base64 编码的 JSON，由脚本自动学习和更新，勿手动修改）
-author_identities = "eyJpZGVudGl0aWVzIjogWyJVc2FnaS13dXNhcWkgPDIxODE4MDIzMzZAcXEuY29tPiIsICJVc2FnaS13dXNhcWkgPDIyMjE1MjI4MCtVc2FnaS13dXNhcWlAdXNlcnMubm9yZXBseS5naXRodWIuY29tPiIsICJ3dXNhcWkgPDIxODE4MDIzMzZAcXEuY29tPiIsICJ3dXNhcWkgPDIyMjE1MjI4MCtVc2FnaS13dXNhcWlAdXNlcnMubm9yZXBseS5naXRodWIuY29tPiJdfQ=="
+# 作者邮箱在运行时通过 GitHub API 获取，仅保存在内存中，不写入本文件
 
 # ---- GitHub API ----
 [api]

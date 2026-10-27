@@ -14,6 +14,7 @@
        取代原先每次 commit 调用 2 次 git show——冷启动时进程数从数百降到个位数。
     2. HTTP 走 urllib，不再 fork curl 子进程。
     3. 仓库级线程池并发；预筛探测也并发（限流可控）。
+    4. 作者邮箱通过 GitHub API 读取，仅保存在内存中，不写入配置。
 """
 
 from __future__ import annotations
@@ -238,12 +239,13 @@ class App:
         self.svg["font"] = _merged(svg_raw.get("font", {}), SVG_FONT_DEFAULTS)
         self.svg["labels"] = _merged(svg_raw.get("labels", {}), SVG_LABEL_DEFAULTS)
 
-        self.author_identities_b64: str = raw.get("author_identities", "")
         self.image_extensions = [e.lower() for e in self.behavior["image_extensions"]]
 
-        self.identities: set[str] = set()
-        self.identities_lock = threading.Lock()
-        self.identities_changed = False
+        # 运行时获取的邮箱，仅保存在内存中，不回写配置
+        self.emails: set[str] = set()
+        self.emails_lock = threading.Lock()
+        # 账号邮箱令牌（user:email 权限），用于读取账号下的全部邮箱
+        self.emails_token = os.environ.get("EMAILS_TOKEN", "")
         self.rate_limit: str | None = None
 
     def _load_raw_config(self) -> dict:
@@ -261,36 +263,20 @@ class App:
             print_color(f"⚠️  config.toml 解析失败，使用默认配置: {exc}", YELLOW)
             return {}
 
-    # ---- 作者身份 ----
+    # ---- 作者邮箱（运行时获取，结束后丢弃） ----
 
-    def load_identities(self) -> None:
-        raw = self.author_identities_b64.strip()
-        if not raw:
-            return
-        try:
-            text = base64.b64decode(raw).decode("utf-8")
-            data = json.loads(text)
-            found = {str(i) for i in data.get("identities", [])}
-        except Exception:
-            print_color("⚠️  加载作者身份失败", YELLOW)
-            return
-        with self.identities_lock:
-            self.identities = found
-        if found:
-            print_color(f"💾 已加载 {len(found)} 个已知作者身份", GREEN)
+    def add_emails(self, found: set[str]) -> int:
+        """并入新发现的邮箱，返回真正新增的数量。"""
+        if not found:
+            return 0
+        with self.emails_lock:
+            before = len(self.emails)
+            self.emails |= found
+            return len(self.emails) - before
 
-    def snapshot_identities(self) -> list[str]:
-        with self.identities_lock:
-            return sorted(self.identities)
-
-    def merge_identities(self, new: set[str]) -> bool:
-        with self.identities_lock:
-            before = len(self.identities)
-            self.identities |= new
-            changed = len(self.identities) > before
-        if changed:
-            self.identities_changed = True
-        return changed
+    def snapshot_emails(self) -> list[str]:
+        with self.emails_lock:
+            return sorted(self.emails)
 
     def set_rate_limit(self, message: str) -> None:
         if self.rate_limit is None:
@@ -300,51 +286,6 @@ class App:
 
     def cache_file(self, repo_name: str) -> Path:
         return self.cache_dir / f"{repo_name}.json"
-
-
-def save_author_identities(app: App) -> None:
-    """把身份集合写回 config.toml（Base64 JSON），保留注释与格式。"""
-    identities = app.snapshot_identities()
-    payload = json.dumps({"identities": identities}, ensure_ascii=False)
-    encoded = base64.b64encode(payload.encode("utf-8")).decode("ascii")
-
-    try:
-        content = app.config_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        print_color(f"⚠️  保存作者身份失败: {exc}", YELLOW)
-        return
-
-    updated = update_toml_value(content, "author_identities", encoded)
-    try:
-        app.config_path.write_text(updated, encoding="utf-8", newline="\n")
-    except OSError as exc:
-        print_color(f"⚠️  保存作者身份失败: {exc}", YELLOW)
-        return
-    print_color(f"💾 已保存 {len(identities)} 个作者身份", GREEN)
-
-
-def update_toml_value(content: str, key: str, value: str) -> str:
-    """原地替换行首 `key = ` 之后的值，保留注释与其余格式。"""
-    replacement = f'"{value}"'
-    # 整行替换（含旧值），但保留行尾 ` # 注释`
-    pattern = re.compile(rf"^({re.escape(key)}[ \t]*=[ \t]*)(.*?)([ \t]+#.*)?$")
-    out: list[str] = []
-    replaced = False
-    for line in content.split("\n"):
-        if not replaced and pattern.match(line):
-            out.append(
-                pattern.sub(
-                    lambda m: m.group(1) + replacement + (m.group(3) or ""),
-                    line,
-                    count=1,
-                )
-            )
-            replaced = True
-        else:
-            out.append(line)
-    if not replaced:
-        print_color(f"⚠️  config.toml 中未找到键 '{key}'，跳过更新", YELLOW)
-    return "\n".join(out)
 
 
 def get_default_from_readme(readme_path: Path, var_name: str) -> str | None:
@@ -373,13 +314,14 @@ class ApiError(Exception):
         self.message = message
 
 
-def github_api_request(app: App, url: str) -> str:
+def github_api_request(app: App, url: str, token: str | None = None) -> str:
     headers = {
         "Accept": "application/vnd.github.v3+json",
         "User-Agent": "generate-stats",
     }
-    if app.token:
-        headers["Authorization"] = f"token {app.token}"
+    auth = app.token if token is None else token
+    if auth:
+        headers["Authorization"] = f"token {auth}"
 
     req = urllib.request.Request(url, headers=headers, method="GET")
     try:
@@ -416,15 +358,16 @@ def github_api_request(app: App, url: str) -> str:
                 message = f"HTTP {status}"
             raise ApiError("rate_limit", f"GitHub API 配额耗尽: {message}")
 
-    raise ApiError("failure")
-
-
-def api_json(app: App, url: str):
-    """请求并解析 JSON；配额耗尽抛 ApiError('rate_limit')，其他失败返回 None。"""
     try:
-        body = github_api_request(app, url)
-    except ApiError:
-        raise
+        detail = json.loads(body).get("message", "")
+    except Exception:
+        detail = ""
+    raise ApiError("failure", f"HTTP {status}" + (f": {detail}" if detail else ""))
+
+
+def api_json(app: App, url: str, token: str | None = None):
+    """请求并解析 JSON；HTTP 失败抛 ApiError，响应不是 JSON 时返回 None。"""
+    body = github_api_request(app, url, token)
     try:
         return json.loads(body)
     except Exception:
@@ -432,7 +375,7 @@ def api_json(app: App, url: str):
 
 
 # ============================================================================
-# GitHub 仓库列表 / 上游 / 身份学习
+# GitHub 仓库列表 / 上游 / 邮箱收集
 # ============================================================================
 
 
@@ -513,7 +456,7 @@ def get_upstream_repo(app: App, repo: dict) -> tuple[str | None, str | None]:
 
 
 def probe_user_commits(app: App, owner: str, repo_name: str) -> list[dict] | None:
-    """探测用户在某仓库是否有提交；顺带用于学习作者身份。每次探测只 1 个 API 请求。"""
+    """探测用户在某仓库是否有提交。每次探测只 1 个 API 请求。"""
     base = app.api["github_api_base"]
     per_page = int(app.api["per_page"])
     url = f"{base}/repos/{owner}/{repo_name}/commits?author={app.origin_username}&per_page={per_page}&page=1"
@@ -526,23 +469,53 @@ def probe_user_commits(app: App, owner: str, repo_name: str) -> list[dict] | Non
     return data if isinstance(data, list) else None
 
 
-def learn_identities(app: App, commits: list[dict], log: Log) -> None:
-    found: set[str] = set()
-    for commit in commits:
-        author = (commit.get("commit") or {}).get("author") or {}
-        name = author.get("name") or ""
-        email = author.get("email") or ""
-        if name and email:
-            found.add(f"{name} <{email}>")
-    if not found:
-        return
+def fetch_account_emails(app: App) -> set[str]:
+    """读取账号下的全部邮箱，需要带 user:email 权限的令牌。
 
-    log.color(f"    ✅ 发现 {len(found)} 个作者身份", GREEN)
-    for identity in sorted(found):
-        log.color(f"       - {identity}", NC)
+    返回值即统计口径的全部依据；为空表示无法确定归属，调用方应中止运行。
+    """
+    if not app.emails_token:
+        return set()
 
-    if app.merge_identities(found):
-        log.color(f"    ✅ 发现新身份，共 {len(app.snapshot_identities())} 个", GREEN)
+    base = app.api["github_api_base"]
+    token = app.emails_token
+
+    try:
+        me = api_json(app, f"{base}/user", token)
+    except ApiError as exc:
+        raise ApiError(
+            exc.kind, f"邮箱令牌校验失败: {exc.message or '请求失败'}"
+        ) from exc
+    login = str((me or {}).get("login") or "").strip()
+    if login.lower() != app.origin_username.lower():
+        raise ApiError(
+            "failure",
+            f"邮箱令牌属于 {login or '未知账号'}，与 {app.origin_username} 不一致",
+        )
+
+    per_page = int(app.api["per_page"])
+    limit = int(app.api["max_api_pages"])
+    emails: set[str] = set()
+    page = 1
+    while page <= limit:
+        url = f"{base}/user/emails?per_page={per_page}&page={page}"
+        try:
+            data = api_json(app, url, token)
+        except ApiError as exc:
+            raise ApiError(
+                exc.kind, f"读取邮箱列表失败: {exc.message or '请求失败'}"
+            ) from exc
+        if not isinstance(data, list) or not data:
+            break
+        for item in data:
+            # 账号下的邮箱都参与匹配，不区分是否已验证
+            email = str((item or {}).get("email") or "").strip().lower()
+            if email:
+                emails.add(email)
+        if len(data) < per_page:
+            break
+        page += 1
+    return emails
 
 
 # ============================================================================
@@ -710,11 +683,12 @@ def _commit_meta_format() -> str:
 
 
 def collect_user_commits(
-    repo_path: Path, remote: str, branch: str, identities: list[str]
+    repo_path: Path, remote: str, branch: str, emails: list[str]
 ) -> list[tuple[str, str]]:
-    """一次 git log 拿到全部 commit 元数据，在 Python 侧按身份过滤。
+    """一次 git log 拿到全部 commit 元数据，在 Python 侧按邮箱过滤。
 
-    取代原先「每个身份 × 2 个 flag」的多次全历史扫描（4 身份 = 8 次 git log）。
+    全历史只扫描一次，过滤在内存中完成。
+    匹配只比较邮箱，名字不参与；GitHub 判定归属也是同样的口径。
     """
     out, code = run_git(
         ["log", f"{remote}/{branch}", f"--format={_commit_meta_format()}"],
@@ -723,7 +697,7 @@ def collect_user_commits(
     if code != 0:
         return []
 
-    wanted = {i.lower() for i in identities}
+    wanted = {e.strip().lower() for e in emails if e.strip()}
     if not wanted:
         return []
 
@@ -735,7 +709,7 @@ def collect_user_commits(
         parts = line[1:].split(FS)
         if len(parts) < 5:
             continue
-        sha, date, name, email, trailers = (
+        sha, date, _name, email, trailers = (
             parts[0],
             parts[1],
             parts[2],
@@ -745,11 +719,16 @@ def collect_user_commits(
         if sha in seen:
             continue
 
-        author_id = f"{name} <{email}>".lower()
-        matched = author_id in wanted
+        email_key = email.strip().lower()
+        matched = bool(email_key) and email_key in wanted
         if not matched and trailers:
             for item in trailers.split(TS):
-                if item.strip().lower() in wanted:
+                # trailer 形如 `Name <email>`，只取尖括号中的地址参与比较
+                pos = item.rfind("<")
+                if pos < 0:
+                    continue
+                candidate = item[pos + 1 :].rstrip("> ").strip().lower()
+                if candidate and candidate in wanted:
                     matched = True
                     break
         if matched:
@@ -1235,13 +1214,13 @@ def analyze_repo(
     if repo_path:
         log.color(f"    ℹ️  默认分支: {branch}", NC)
 
-    identities = app.snapshot_identities()
+    emails = app.snapshot_emails()
     commits: list[tuple[str, str]] = []
-    if not identities:
-        log.color("    ⚠️  没有已知作者身份，需要先从 API 学习", YELLOW)
+    if not emails:
+        log.color("    ⚠️  尚未收集到作者邮箱，无法过滤提交", YELLOW)
     elif repo_path:
-        log.color(f"    ℹ️  使用 {len(identities)} 个作者身份匹配", NC)
-        commits = collect_user_commits(repo_path, remote, branch, identities)
+        log.color(f"    ℹ️  使用 {len(emails)} 个作者邮箱匹配", NC)
+        commits = collect_user_commits(repo_path, remote, branch, emails)
 
     is_api_fallback = False
     if not commits:
@@ -1667,8 +1646,6 @@ def process_repos(app: App, repos: list[dict]) -> bool:
         for meta, items, log in results:
             owner = meta["owner"]
             name = meta["name"]
-            if items is not None:
-                learn_identities(app, items, log)
             if items is not None and not items and not app.cache_file(name).exists():
                 log.color("  ⏭️  该仓库无用户提交，跳过克隆", NC)
                 log.flush()
@@ -1791,7 +1768,25 @@ def run() -> int:
         print_color("❌ 错误: GH_TOKEN 环境变量未设置", RED)
         return 1
 
-    app.load_identities()
+    if not app.emails_token:
+        print_color("❌ 未设置 EMAILS_TOKEN，无法确定提交归属", RED)
+        print_color(
+            "   请在 Settings → Secrets and variables → Actions 中添加名为 "
+            "EMAILS_TOKEN 的密钥，权限只需 user:email",
+            NC,
+        )
+        return 1
+
+    try:
+        account_emails = fetch_account_emails(app)
+    except ApiError as exc:
+        print_color(f"❌ {exc.message}", RED)
+        return 1
+    if not account_emails:
+        print_color("❌ 账号下没有可用邮箱，无法确定提交归属", RED)
+        return 1
+    app.add_emails(account_emails)
+    print_color(f"📧 已读取账号下的 {len(account_emails)} 个邮箱", GREEN)
 
     try:
         repos = get_repos(app)
@@ -1803,10 +1798,6 @@ def run() -> int:
         return 1
 
     any_changed = process_repos(app, repos)
-
-    # 新身份统一在末尾串行写回 config.toml，避免并发写
-    if app.identities_changed:
-        save_author_identities(app)
 
     if app.rate_limit:
         print_color(f"❌ {app.rate_limit}", RED)

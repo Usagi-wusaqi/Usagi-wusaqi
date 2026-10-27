@@ -87,6 +87,7 @@ jobs:
       - name: 生成统计数据
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EMAILS_TOKEN: ${{ secrets.EMAILS_TOKEN }}
           ORIGIN_USERNAME: ${{ steps.determine-users.outputs.ORIGIN_USERNAME }}
           UPSTREAM_USERNAME: ${{ steps.determine-users.outputs.UPSTREAM_USERNAME }}
         run: |

@@ -5,7 +5,7 @@ UPSTREAM_USERNAME = {{UPSTREAM_USERNAME}}
 模板说明：
 - README.template.md 是模板文件，脚本会从中生成 README.md
 - 用户名占位符 {{ORIGIN_USERNAME}} / {{UPSTREAM_USERNAME}} 由脚本自动替换
-- 作者身份由脚本自动从 API 学习，无需手动配置
+- 作者邮箱在运行时从 GitHub API 获取，不写入配置文件
 -->
 
 <img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&height=3" width="100%"/>

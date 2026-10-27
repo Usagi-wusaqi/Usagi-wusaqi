@@ -67,7 +67,7 @@ python scripts/generate_stats.py --help        # 显示帮助信息
 │  │ 逐仓库:           │──→  analyze_repo()               │
 │  │ clone（全量历史） │      ├─ git log #1: commit 元数据 │
 │  │                   │      │  （sha/日期/作者，Python  │
-│  │                   │      │   侧按身份过滤）          │
+│  │                   │      │   侧按邮箱过滤）          │
 │  │                   │      ├─ 缓存命中: 跳过           │
 │  │                   │      └─ git log #2: 批量取       │
 │  │                   │         未命中的增删行与文件状态 │
@@ -112,11 +112,10 @@ python scripts/generate_stats.py --help        # 显示帮助信息
 
 ### config.toml 格式
 
-采集脚本的配置集中在仓库根目录的 `config.toml`，共四部分：
+采集脚本的配置集中在仓库根目录的 `config.toml`，共三部分：
 
 | 键 / 段 | 作用 |
 | ------- | ---- |
-| `author_identities` | Base64 编码的身份列表，由脚本自动学习并原地写回（保留注释与格式） |
 | `[api]` | GitHub API 基址、分页大小、最大页数与配额告警阈值 |
 | `[svg]` | 卡片标题、配色、布局与字体（含 `custom_title`、`layout`、`font`、`labels`） |
 | `[behavior]` | 进度打印间隔、分隔线宽度、并发仓库数 `concurrency`、图片扩展名 |
@@ -179,7 +178,7 @@ python scripts/generate_stats.py --help        # 显示帮助信息
 - **增量更新** - 只处理新增的 commits，避免重复分析
 - **保守缓存** - 默认追加/更新并按 commit URL 去重；需要彻底重建时使用 `--clear-cache`
 - **智能跳过** - 统计数据未变化时不更新 README，避免无意义的提交
-- **自动压缩提交** - 连续的统计工作流提交会自动压缩到上一条统计提交，避免机器人提交刷屏
+- **自动压缩提交** - 连续的统计工作流提交会自动压缩到上一条统计提交，避免刷屏
 
 ### 📊 数据统计
 - **代码行数** - 统计每个 commit 的 additions 和 deletions（通过 `git log --numstat` 逐文件求和）
@@ -209,6 +208,7 @@ python scripts/generate_stats.py --help        # 显示帮助信息
 | 变量名 | 必需 | 默认值 | 说明 |
 | ------ | ---- | ------ | ---- |
 | `GH_TOKEN` | 本地运行 ✅ / Actions 自动提供 | GitHub Actions 中默认映射为 `secrets.GITHUB_TOKEN` | GitHub Token；如需统计私有仓库，需自行修改 workflow 以读取自定义 secret |
+| `EMAILS_TOKEN` | ✅ | 无 | 带 `user:email` 权限的 PAT，用于读取账号下的全部邮箱；缺失时脚本直接报错退出 |
 | `ORIGIN_USERNAME` | ❌ | 自动检测 | 远端用户名 |
 | `UPSTREAM_USERNAME` | ❌ | 自动检测 | 上游用户名 |
 
@@ -219,9 +219,12 @@ python scripts/generate_stats.py --help        # 显示帮助信息
 ```yaml
 env:
   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  EMAILS_TOKEN: ${{ secrets.EMAILS_TOKEN }}
   ORIGIN_USERNAME: ${{ steps.determine-users.outputs.ORIGIN_USERNAME }}
   UPSTREAM_USERNAME: ${{ steps.determine-users.outputs.UPSTREAM_USERNAME }}
 ```
+
+`EMAILS_TOKEN` 需要在仓库的 `Settings > Secrets and variables > Actions` 中自行添加，创建时勾选 `user:email` 即可。缺失或失效时脚本会中止运行，不会产出不完整的结果。
 
 > **私有仓库说明：** 如果你希望统计私有仓库，可以把这里的 `secrets.GITHUB_TOKEN` 改成你自己配置的 secret（例如 `secrets.GH_TOKEN`）；当前仓库默认工作流不会自动覆盖。
 
@@ -338,12 +341,15 @@ env:
 - **Actions 缓存** - 工作流用 `actions/cache` 保存该目录，缓存命中后耗时与仓库历史规模无关
 - **失效重建** - 更新失败或目录损坏时自动删除并重新克隆
 
-### 作者身份管理
+### 作者邮箱获取
 
-- **自动学习** - 从 GitHub API 自动学习用户的所有提交身份（Name + Email）
-- **防冒充** - git log 匹配时使用完整的 `Name <email>` 格式，防止同名冒充
-- **持久化存储** - 以 Base64 编码保存到 `config.toml` 的 `author_identities` 字段
-- **增量更新** - 每次处理仓库时增量学习新身份，支持用户改名场景
+邮箱有两个来源，优先取账号接口：
+
+- **唯一来源** - 通过 `EMAILS_TOKEN`（`user:email` 权限）读取账号下的全部邮箱，与提交的时间、数量、所在仓库无关
+- **拿不到就停** - 未配置或令牌失效时直接报错退出，不退化成部分采样
+- **只按邮箱匹配** - 名字不参与判断，改用户名不影响归属
+- **不写入配置** - 邮箱只保存在内存中，`config.toml` 与仓库里都没有邮箱列表
+- **共同作者** - `Co-authored-by` 里的邮箱同样参与匹配
 
 ### Fork 处理逻辑
 
@@ -354,12 +360,14 @@ env:
 
 ### 自动提交作者逻辑
 
-工作流生成的统计提交始终只使用 GitHub Actions 机器人身份：
+工作流生成的统计提交以仓库所有者身份提交，不使用 Actions 机器人身份：
 
-- **作者** - `github-actions[bot] <github-actions[bot]@users.noreply.github.com>`
+- **作者** - `{远端用户名} <{用户ID}+{远端用户名}@users.noreply.github.com>`，即该账号的 noreply 邮箱
 - **提交信息** - 固定为 `📊 更新统计（自动）`，不添加触发者或其他共同作者
 
-当最新一条提交本身就是统计工作流生成的自动提交，新的统计结果会直接压缩进上一条统计提交，而不是继续新增一条机器人提交。
+统计只按邮箱判定归属，所以这类自动提交同样会算进仓库所有者的提交数与行数。
+
+当最新一条提交同时满足「标题为 `📊 更新统计（自动）`」和「作者与本次一致」时，新的统计结果会直接压缩进上一条统计提交，不再新增一条。
 
 ---
 
