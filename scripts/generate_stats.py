@@ -23,6 +23,7 @@ import contextlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -596,29 +597,36 @@ def run_git(args: list[str], cwd: Path | None = None, stdin_data: str | None = N
     return out, code
 
 
-def clone_or_update(
-    app: App, repo_path: Path, clone_url: str, repo_name: str, temp_dir: Path, log: Log
-) -> bool:
+def clone_or_update(repo_path: Path, clone_url: str, log: Log) -> bool:
     if repo_path.exists():
         log.color("  🔄 更新本地仓库...", YELLOW)
         run_git(["fetch", "origin"], cwd=repo_path)
         return True
 
     log.color("  📥 克隆仓库...", YELLOW)
-    # 说明：不使用 --filter=blob:none。统计增删行数需要 blob 内容，
-    # 部分克隆会让后续 git log --numstat 触发成百上千次按需拉取，反而更慢。
-    # 这里改为完整历史 + 不检出工作树：网络开销收敛为一次 pack 下载，之后全本地。
-    _, code = run_git(
-        [
-            "clone",
-            "--no-checkout",
-            "--single-branch",
-            "--no-tags",
-            clone_url,
-            repo_name,
-        ],
-        cwd=temp_dir,
-    )
+    # 统计只需要 commit 与 tree 对象；文件内容（blob）只在缓存未命中的少数 commit
+    # 计算增删行数时才用到，git 会按需补拉。这类仓库的对象里有 96% 以上是 blob，
+    # 因此用 blobless 部分克隆压掉下载量，比全量拉取省一个数量级。
+    code = 1
+    detail = ""
+    for filter_args in (["--filter=blob:none"], []):
+        _, detail, code = _run_git_raw(
+            [
+                "clone",
+                *filter_args,
+                "--no-checkout",
+                "--single-branch",
+                "--no-tags",
+                clone_url,
+                repo_path.name,
+            ],
+            cwd=repo_path.parent,
+        )
+        if code == 0 and repo_path.exists():
+            break
+        # 失败（如 git 版本不支持 filter）会留下半成品目录，清掉再退回全量克隆
+        if repo_path.exists():
+            shutil.rmtree(repo_path, ignore_errors=True)
     if code != 0 or not repo_path.exists():
         log.color("  ⚠️  克隆仓库失败，跳过", YELLOW)
         return False
@@ -1434,9 +1442,7 @@ class Job:
 
 def process_job(app: App, job: Job, temp_dir: Path) -> bool:
     log = job.log
-    if not clone_or_update(
-        app, job.repo_path, job.clone_url, job.repo_name, temp_dir, log
-    ):
+    if not clone_or_update(job.repo_path, job.clone_url, log):
         log.flush()
         return False
     changed = analyze_repo(app, job.repo_path, job.owner, job.repo_name, log)
