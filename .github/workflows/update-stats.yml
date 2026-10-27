@@ -9,6 +9,12 @@ on:
 permissions:
   contents: write
 
+# 同一时间只保留一个实例：手动触发撞上定时任务时排队执行，
+# 避免两个运行同时改写统计文件后互相覆盖
+concurrency:
+  group: update-stats
+  cancel-in-progress: false
+
 jobs:
   update-stats:
     runs-on: ubuntu-latest
