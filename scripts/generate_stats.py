@@ -13,7 +13,7 @@
     1. 每个仓库只用 2 次 git 进程（1 次取 commit 元数据、1 次批量取 diff 统计），
        取代原先每次 commit 调用 2 次 git show——冷启动时进程数从数百降到个位数。
     2. HTTP 走 urllib，不再 fork curl 子进程。
-    3. 仓库级线程池并发；预筛探测也并发（限流可控）。
+    3. 仓库级线程池并发；上游解析与克隆同时并发，API 并发度单独限制。
     4. 作者邮箱通过 GitHub API 读取，仅保存在内存中，不写入配置。
 """
 
@@ -30,7 +30,7 @@ import sys
 import threading
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -455,20 +455,6 @@ def get_upstream_repo(app: App, repo: dict) -> tuple[str | None, str | None]:
     return None, None
 
 
-def probe_user_commits(app: App, owner: str, repo_name: str) -> list[dict] | None:
-    """探测用户在某仓库是否有提交。每次探测只 1 个 API 请求。"""
-    base = app.api["github_api_base"]
-    per_page = int(app.api["per_page"])
-    url = f"{base}/repos/{owner}/{repo_name}/commits?author={app.origin_username}&per_page={per_page}&page=1"
-    try:
-        data = api_json(app, url)
-    except ApiError as exc:
-        if exc.kind == "rate_limit":
-            app.set_rate_limit(exc.message)
-        return None
-    return data if isinstance(data, list) else None
-
-
 def fetch_account_emails(app: App) -> set[str]:
     """读取账号下的全部邮箱，需要带 user:email 权限的令牌。
 
@@ -570,6 +556,10 @@ def run_git(args: list[str], cwd: Path | None = None, stdin_data: str | None = N
     return out, code
 
 
+class CloneError(Exception):
+    """仓库无法就绪，该仓库的统计结果不可信。"""
+
+
 def branch_sha(repo_path: Path, remote: str, branch: str, *, at_remote: bool) -> str:
     """取分支的 commit SHA，可指定取本地记录还是远端当前值。"""
     if not at_remote:
@@ -589,7 +579,7 @@ def branch_sha(repo_path: Path, remote: str, branch: str, *, at_remote: bool) ->
     return ""
 
 
-def clone_or_update(repo_path: Path, clone_url: str, log: Log) -> bool:
+def clone_or_update(repo_path: Path, clone_url: str, log: Log) -> None:
     if repo_path.exists():
         remote = remote_name_of(repo_path)
         # 上游可能改名或转让，让远端地址始终跟随当前仓库
@@ -601,7 +591,7 @@ def clone_or_update(repo_path: Path, clone_url: str, log: Log) -> bool:
             repo_path, remote, branch, at_remote=True
         ):
             log.color("  ✅ 已是最新", GREEN)
-            return True
+            return
         log.color("  🔄 拉取新增提交...", YELLOW)
         # 显式 refspec：单分支克隆的默认 refspec 不会跟踪新分支，
         # 上游改默认分支名后仍能把新分支拉到本地
@@ -616,7 +606,7 @@ def clone_or_update(repo_path: Path, clone_url: str, log: Log) -> bool:
             cwd=repo_path,
         )
         if code == 0:
-            return True
+            return
         # 本地克隆损坏、远端地址变更或网络中断：清掉重新克隆，避免沿用旧历史
         log.color("  ⚠️  更新失败，重新克隆", YELLOW)
         shutil.rmtree(repo_path, ignore_errors=True)
@@ -646,9 +636,9 @@ def clone_or_update(repo_path: Path, clone_url: str, log: Log) -> bool:
         if repo_path.exists():
             shutil.rmtree(repo_path, ignore_errors=True)
     if code != 0 or not repo_path.exists():
-        log.color("  ⚠️  克隆仓库失败，跳过", YELLOW)
-        return False
-    return True
+        # 只取末行，git 的致命错误信息通常就在这一行
+        tail = detail.splitlines()[-1][:200] if detail else ""
+        raise CloneError(f"克隆 {repo_path.name} 失败" + (f": {tail}" if tail else ""))
 
 
 def remote_name_of(repo_path: Path) -> str:
@@ -684,18 +674,25 @@ def _commit_meta_format() -> str:
 
 def collect_user_commits(
     repo_path: Path, remote: str, branch: str, emails: list[str]
-) -> list[tuple[str, str]]:
+) -> list[tuple[str, str]] | None:
     """一次 git log 拿到全部 commit 元数据，在 Python 侧按邮箱过滤。
 
     全历史只扫描一次，过滤在内存中完成。
     匹配只比较邮箱，名字不参与；GitHub 判定归属也是同样的口径。
+    返回 None 表示历史读取失败，与「确实没有提交」区分开。
     """
     out, code = run_git(
         ["log", f"{remote}/{branch}", f"--format={_commit_meta_format()}"],
         cwd=repo_path,
     )
     if code != 0:
-        return []
+        # 分支引用不存在（空仓库或默认分支判断错误）按 0 提交处理，
+        # 引用存在却读不出来才是真的失败，需要让调用方报错而不是记成 0
+        _, ref_code = run_git(
+            ["show-ref", "--verify", "--quiet", f"refs/remotes/{remote}/{branch}"],
+            cwd=repo_path,
+        )
+        return None if ref_code == 0 else []
 
     wanted = {e.strip().lower() for e in emails if e.strip()}
     if not wanted:
@@ -1219,8 +1216,12 @@ def analyze_repo(
     if not emails:
         log.color("    ⚠️  尚未收集到作者邮箱，无法过滤提交", YELLOW)
     elif repo_path:
-        log.color(f"    ℹ️  使用 {len(emails)} 个作者邮箱匹配", NC)
-        commits = collect_user_commits(repo_path, remote, branch, emails)
+        found = collect_user_commits(repo_path, remote, branch, emails)
+        if found is None:
+            # 读不出历史时不静默记 0，交由调用方计入失败清单
+            log.color(f"    ❌ 无法读取 {remote}/{branch} 的历史", RED)
+            raise RuntimeError(f"无法读取 {remote}/{branch} 的历史")
+        commits = found
 
     is_api_fallback = False
     if not commits:
@@ -1536,12 +1537,14 @@ class Job:
         self.full_name = full_name
 
 
-def process_job(app: App, job: Job, temp_dir: Path) -> bool:
+def process_job(app: App, job: Job) -> bool:
+    """克隆并分析单个仓库。日志留在 job.log 里，由调用方按配置顺序输出。
+
+    仓库无法就绪时抛 CloneError，由调用方计入失败清单。
+    """
     log = job.log
-    if not clone_or_update(job.repo_path, job.clone_url, log):
-        log.flush()
-        return False
-    changed = analyze_repo(
+    clone_or_update(job.repo_path, job.clone_url, log)
+    return analyze_repo(
         app,
         job.repo_path,
         job.owner,
@@ -1550,42 +1553,46 @@ def process_job(app: App, job: Job, temp_dir: Path) -> bool:
         job.repo_id,
         job.full_name,
     )
-    log.flush()
-    return changed
 
 
-def process_repos(app: App, repos: list[dict]) -> bool:
+def process_repos(app: App, repos: list[dict]) -> tuple[bool, list[str]]:
+    """返回 (是否有变更, 未能完成的仓库名)。"""
     separator_length = int(
         app.behavior.get("separator_length", DEFAULT_SEPARATOR_LENGTH)
     )
-    print_separator("开始处理仓库...", GREEN, separator_length)
+    print_separator(f"🔍 解析仓库与上游（共 {len(repos)} 个）", GREEN, separator_length)
 
     temp_dir = PROJECT_ROOT / "temp_repos"
     temp_dir.mkdir(parents=True, exist_ok=True)
 
+    concurrency = max(
+        int(
+            app.behavior.get("concurrency", DEFAULT_CONCURRENCY) or DEFAULT_CONCURRENCY
+        ),
+        1,
+    )
+    # 上游解析是一串 API 请求，并发度压在 4 以内，避免触发 GitHub 二级限流
+    workers = max(min(concurrency, len(repos), 4), 1)
+    print_color("  ⏳ 并发解析上游仓库...", NC)
+
+    # ---- Phase A1（并发）：只解析上游，不打印，避免日志落到别的仓库块里 ----
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        upstreams = list(pool.map(lambda repo: get_upstream_repo(app, repo), repos))
+
+    # ---- Phase A2（串行）：按配置顺序确定克隆目标并去重 ----
     active_repo_names: set[str] = set()
     active_repo_ids: set[str] = set()
-    processed_targets: set[str] = set()
-    jobs: list[Job] = []
+    first_seen: dict[str, str] = {}
+    entries: list[dict] = []
 
-    # ---- Phase A（并发预筛）：解析上游 + 探测提交 + 学习身份 ----
-    preflight: list[tuple[dict, str, str, str, Log]] = []
-    for repo in repos:
+    for repo, (up_owner, up_name) in zip(repos, upstreams, strict=True):
         repo_name = repo.get("name")
         repo_url = repo.get("html_url")
         if not repo_name or not repo_url:
             continue
 
-        log = Log()
-        log.separator(f"📦 仓库: {repo_name}", YELLOW, separator_length)
-        log.color(f"  URL: {repo_url}", NC)
-        log.color(f"  类型: {'Fork 仓库' if repo.get('fork') else '原创仓库'}", NC)
-
-        up_owner, up_name = get_upstream_repo(app, repo)
         if up_owner and up_name:
-            log.color(f"  📡 直接克隆上游仓库: {up_owner}/{up_name}", NC)
-            clone_owner = up_owner
-            target_name = up_name
+            clone_owner, target_name = up_owner, up_name
             clone_url = f"https://github.com/{up_owner}/{up_name}.git"
         else:
             clone_owner = repo_owner_from_url(repo_url) or app.origin_username
@@ -1598,76 +1605,83 @@ def process_repos(app: App, repos: list[dict]) -> bool:
         if repo_id:
             active_repo_ids.add(repo_id)
 
+        log = Log()
+        log.separator(f"📦 仓库: {repo_name}", YELLOW, separator_length)
+        log.color(f"  URL: {repo_url}", NC)
+        log.color(f"  克隆: {clone_owner}/{target_name}", NC)
+        log.color("", NC)
+
+        entry = {
+            "repo_name": repo_name,
+            "target": f"{clone_owner}/{target_name}",
+            "log": log,
+            "status": "ok",
+            "note": "",
+            "meta": {
+                "owner": clone_owner,
+                "name": target_name,
+                "clone_url": clone_url,
+                # 目录名带上归属者，避免自己的同名仓库与某个上游重名时互相覆盖
+                "repo_path": temp_dir / f"{clone_owner}__{target_name}",
+                "repo_id": repo_id,
+                "full_name": full_name,
+            },
+        }
+
         target_key = f"{clone_owner}/{target_name}".lower()
-        if target_key in processed_targets:
-            log.color(
-                f"  ℹ️  已处理同一目标仓库，跳过重复项: {clone_owner}/{target_name}", NC
-            )
-            log.flush()
-            continue
-        processed_targets.add(target_key)
+        if target_key in first_seen:
+            entry["status"] = "duplicate"
+            entry["note"] = f"与 {first_seen[target_key]} 同源，跳过"
+        else:
+            first_seen[target_key] = repo_name
+        entries.append(entry)
 
-        preflight.append(
-            (
-                {
-                    "owner": clone_owner,
-                    "name": target_name,
-                    "clone_url": clone_url,
-                    "repo_path": temp_dir / target_name,
-                    "repo_id": repo_id,
-                    "full_name": full_name,
-                },
-                clone_owner,
-                target_name,
-                clone_url,
-                log,
-            )
-        )
-
-    # 并发探测（受限于 GitHub 二级限流，并发度取仓库并发度的一半，至少 2）
-    concurrency = max(
-        int(
-            app.behavior.get("concurrency", DEFAULT_CONCURRENCY) or DEFAULT_CONCURRENCY
-        ),
-        1,
-    )
-    probe_workers = max(min(concurrency, len(preflight)) // 2, 1) if preflight else 1
-    probe_workers = min(probe_workers, 4)
-
-    def probe(item):
-        meta, owner, name, _clone_url, log = item
-        items = probe_user_commits(app, owner, name)
-        return meta, items, log
-
-    if preflight:
-        with ThreadPoolExecutor(max_workers=probe_workers) as pool:
-            results = list(pool.map(probe, preflight))
-
-        for meta, items, log in results:
-            owner = meta["owner"]
-            name = meta["name"]
-            if items is not None and not items and not app.cache_file(name).exists():
-                log.color("  ⏭️  该仓库无用户提交，跳过克隆", NC)
-                log.flush()
-                continue
-            jobs.append(
-                Job(
-                    log=log,
-                    repo_path=meta["repo_path"],
-                    owner=owner,
-                    repo_name=name,
-                    clone_url=meta["clone_url"],
-                    repo_id=meta["repo_id"],
-                    full_name=meta["full_name"],
-                )
-            )
+    # ---- 归属汇总：按配置顺序输出，一行一个仓库，箭头指向实际克隆的仓库 ----
+    width = max((len(entry["repo_name"]) for entry in entries), default=0)
+    for entry in entries:
+        name = entry["repo_name"].ljust(width)
+        if entry["status"] == "duplicate":
+            print_color(f"  ⏭ {name}  →  {entry['target']}（{entry['note']}）", YELLOW)
+        else:
+            print_color(f"  ✓ {name}  →  {entry['target']}", NC)
+    print_color("", NC)
 
     # ---- Phase B（并发）：克隆 + 分析 ----
+    jobs = [
+        Job(
+            log=entry["log"],
+            repo_path=entry["meta"]["repo_path"],
+            owner=entry["meta"]["owner"],
+            repo_name=entry["meta"]["name"],
+            clone_url=entry["meta"]["clone_url"],
+            repo_id=entry["meta"]["repo_id"],
+            full_name=entry["meta"]["full_name"],
+        )
+        for entry in entries
+        if entry["status"] == "ok"
+    ]
+
     any_changed = False
+    failed: list[str] = []
     if jobs:
-        workers = max(min(concurrency, len(jobs)), 1)
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            for changed in pool.map(lambda job: process_job(app, job, temp_dir), jobs):
+        pool_size = max(min(concurrency, len(jobs)), 1)
+        # 并发跑，谁先完成谁先输出：不阻塞、不交织，每块自带仓库名与上游
+        with ThreadPoolExecutor(max_workers=pool_size) as pool:
+            futures = {pool.submit(process_job, app, job): job for job in jobs}
+            for future in as_completed(futures):
+                job = futures[future]
+                try:
+                    changed = future.result()
+                except CloneError as exc:
+                    job.log.color(f"    ❌ {exc}", RED)
+                    failed.append(job.repo_name)
+                    changed = False
+                except Exception as exc:  # 单个仓库失败不影响其余仓库
+                    job.log.color(f"    ❌ 处理失败: {exc}", RED)
+                    failed.append(job.repo_name)
+                    changed = False
+                job.log.flush()
+                print_color("", NC)
                 any_changed = any_changed or bool(changed)
 
     # 本地克隆保留给下次运行复用，只清掉本轮不再出现的仓库
@@ -1682,12 +1696,15 @@ def process_repos(app: App, repos: list[dict]) -> bool:
                 with contextlib.suppress(OSError):
                     path.unlink()
 
+    if failed:
+        print_color(f"  ❌ {len(failed)} 个仓库未能完成，统计可能不完整", RED)
+
     if active_repo_names and cleanup_stale_cache_files(
         app, active_repo_names, active_repo_ids
     ):
         any_changed = True
 
-    return any_changed
+    return any_changed, failed
 
 
 # ============================================================================
@@ -1797,15 +1814,22 @@ def run() -> int:
         print_color("⚠️  没有找到仓库", YELLOW)
         return 1
 
-    any_changed = process_repos(app, repos)
+    any_changed, failed = process_repos(app, repos)
 
     if app.rate_limit:
         print_color(f"❌ {app.rate_limit}", RED)
         return 1
 
+    # 失败的仓库沿用上次缓存，汇总仍自洽；退出码单独标记本次不完整
+    exit_code = 1 if failed else 0
+    if failed:
+        print_color(
+            f"❌ {len(failed)} 个仓库未能完成，结果可能不完整: {', '.join(failed)}", RED
+        )
+
     if not any_changed:
         print_separator("✅ 脚本执行完成（无变更）", GREEN, separator_length)
-        return 0
+        return exit_code
 
     stats = aggregate_stats_from_cache(app)
     net = stats["total_additions"] - stats["total_deletions"]
