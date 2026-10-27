@@ -195,7 +195,7 @@ python scripts/generate_stats.py --help        # 显示帮助信息
 
 ### 🔧 技术优势
 - **零依赖零编译** - 仅用 Python 标准库（tomllib / json / urllib / subprocess），无需安装任何包，改完即可直接运行
-- **子进程极少** - 每个仓库只需 2 次 git 调用（1 次取 commit 元数据、1 次批量取 diff 统计），取代原先每个 commit 2 次 `git show`
+- **子进程极少** - 每个仓库只需 2 次 git 调用（1 次取 commit 元数据、1 次批量取 diff 统计）
 - **容错性强** - git log 失败时自动降级使用 API 兜底
 - **格式保持** - 从模板生成 README，保持布局一致；回退模式用正则精确替换
 

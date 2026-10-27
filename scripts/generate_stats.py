@@ -9,10 +9,10 @@
     ORIGIN_USERNAME     统计目标用户名（缺省时从 README.md 读取）
     UPSTREAM_USERNAME   上游用户名（缺省时从 README.md 读取）
 
-相比原有实现的主要改动：
+实现要点：
     1. 每个仓库只用 2 次 git 进程（1 次取 commit 元数据、1 次批量取 diff 统计），
-       取代原先每次 commit 调用 2 次 git show——冷启动时进程数从数百降到个位数。
-    2. HTTP 走 urllib，不再 fork curl 子进程。
+       冷启动时进程数保持在个位数。
+    2. HTTP 走 urllib，直接发请求，不起 curl 子进程。
     3. 仓库级线程池并发；上游解析与克隆同时并发，API 并发度单独限制。
     4. 作者邮箱通过 GitHub API 读取，仅保存在内存中，不写入配置。
 """
@@ -100,6 +100,14 @@ class Log:
 def format_number(num: int) -> str:
     """千分位格式化（对应 Rust 的 format_number）。"""
     return f"{num:,}"
+
+
+def short_path(path: Path) -> str:
+    """日志里显示相对仓库根目录的路径，避免 CI 上出现超长的绝对路径。"""
+    try:
+        return path.relative_to(PROJECT_ROOT).as_posix()
+    except ValueError:
+        return path.name
 
 
 def escape_html(text: str) -> str:
@@ -388,7 +396,7 @@ def repo_owner_from_url(repo_url: str) -> str | None:
 
 
 def get_repos(app: App) -> list[dict]:
-    print_color("📡 获取所有仓库列表...", YELLOW)
+    print_color("📡 获取仓库列表...", YELLOW)
     repos: list[dict] = []
     base = app.api["github_api_base"]
     per_page = int(app.api["per_page"])
@@ -407,15 +415,12 @@ def get_repos(app: App) -> list[dict]:
         if not isinstance(data, list) or not data:
             break
         repos.extend(data)
-        print_color(f"   第 {page} 页：获取到 {len(data)} 个仓库", NC)
+        print_color(f"    第 {page} 页：{len(data)} 个", NC)
         if len(data) < per_page:
             break
         page += 1
 
-    print_color(f"✅ 获取到 {len(repos)} 个仓库", GREEN)
-    for repo in repos:
-        kind = "Fork" if repo.get("fork") else "原创"
-        print_color(f"   - {repo.get('name', 'Unknown')} ({kind})", NC)
+    print_color(f"✅ 共 {len(repos)} 个仓库", GREEN)
     return repos
 
 
@@ -450,7 +455,6 @@ def get_upstream_repo(app: App, repo: dict) -> tuple[str | None, str | None]:
         owner = (upstream.get("owner") or {}).get("login")
         name = upstream.get("name")
         if owner and name:
-            print_color(f"    📡 检测到上游仓库: {owner}/{name}", NC)
             return owner, name
     return None, None
 
@@ -737,7 +741,7 @@ def collect_user_commits(
 def collect_commit_details(repo_path: Path, shas: list[str]) -> dict[str, dict]:
     """一次 git log 批量取所有目标 commit 的增删行数与文件状态。
 
-    取代原先「每 commit 2 次 git show」，进程数从 2N 降到 1。
+    一批提交共用一个 git 进程。
     """
     if not shas:
         return {}
@@ -832,14 +836,14 @@ def get_commits_from_api(
             ) or now_iso_utc()
             if sha:
                 commits.append((sha, date))
-        log.color(f"    📊 已获取 {len(commits)} 个commits", NC)
+        log.color(f"    📊 已获取 {len(commits)} 个提交", NC)
         if len(data) < per_page:
             break
         page += 1
 
     if page > max_pages:
         log.color(
-            f"    ℹ️  已达到最大页数限制 ({max_pages} 页)，共 {len(commits)} 个commits",
+            f"    ℹ️  已达到最大页数限制 ({max_pages} 页)，共 {len(commits)} 个提交",
             NC,
         )
     return commits
@@ -897,24 +901,27 @@ def load_cache(
     if not cache_file.exists() and repo_id:
         previous = cache_file_by_repo_id(app, repo_id)
         if previous is not None:
-            log.color(f"    🔀 沿用改名前的缓存: {previous.name}", YELLOW)
+            log.color(f"    🔀 沿用改名前的缓存 {previous.name}", YELLOW)
             try:
                 previous.rename(cache_file)
             except OSError:
                 cache_file = previous
     if not cache_file.exists():
-        log.color(f"⚠️  加载缓存失败: {cache_file} 不存在", YELLOW)
+        log.color("    ℹ️  无缓存，首次统计", NC)
         return {}
 
     try:
         data = json.loads(cache_file.read_text(encoding="utf-8"))
     except Exception as exc:
-        log.color(f"⚠️  加载缓存失败: {exc}", YELLOW)
+        log.color(f"    ⚠️  缓存解析失败: {exc}", YELLOW)
         return {}
 
-    log.color(f"💾 已加载缓存: {cache_file}", GREEN)
     meta = data.get("_metadata") or {}
-    log.color(f"   缓存包含 {meta.get('total_commits', 0)} 个commits", NC)
+    log.color(
+        f"    💾 已加载缓存: {short_path(cache_file)}"
+        f"（{meta.get('total_commits', 0)} 个提交）",
+        GREEN,
+    )
 
     raw_data = data.get("data") or {}
     cache: dict[str, list[dict]] = {}
@@ -1038,7 +1045,7 @@ def save_cache(
         old = ""
 
     if old == serialized:
-        log.color(f"✅ 缓存无变化: {cache_file}", GREEN)
+        log.color("    ✅ 缓存无变化", GREEN)
         return False
 
     try:
@@ -1050,12 +1057,7 @@ def save_cache(
     cache.clear()
     cache.update(sorted_cache)
 
-    log.color(f"✅ 缓存已保存: {cache_file}", GREEN)
-    log.color(f"   commits: {total_commits}", NC)
-    log.color(
-        f"   additions: {total_additions}  deletions: {total_deletions}  images: {total_images}",
-        NC,
-    )
+    log.color(f"    ✅ 缓存已保存: {short_path(cache_file)}", GREEN)
     return True
 
 
@@ -1098,17 +1100,17 @@ def clean_stale_cache(
         lo = min_ts[:10] if min_ts else "?"
         hi = max_ts[:10] if max_ts else "?"
         if out_of_range:
-            log.color(f"    ℹ️  API 兜底模式（检查范围: {lo} ~ {hi}）", NC)
-            log.color(f"       保留 {len(out_of_range)} 个超出 API 范围的数据", NC)
-    else:
-        log.color("    ℹ️  Git log 模式（完整历史）", NC)
+            log.color(
+                f"    ℹ️  数据范围 {lo} ~ {hi}（API），"
+                f"保留 {len(out_of_range)} 个范围外提交",
+                NC,
+            )
 
     if not stale:
-        log.color("    ✅ 缓存数据完整，无消失的commits", GREEN)
+        log.color("    ✅ 缓存完整", GREEN)
         return
 
-    log.color(f"    🧹 检测到 {len(stale)} 个消失的commits", YELLOW)
-    log.color("       原因：被变基、压缩或重写", YELLOW)
+    log.color(f"    🧹 清理 {len(stale)} 个已消失的提交（变基/压缩/重写）", YELLOW)
 
     new_list = out_of_range + [
         item for item in in_range if item.get("url") not in stale
@@ -1119,7 +1121,7 @@ def clean_stale_cache(
         del cache[repo_name]
         log.color("    ℹ️  仓库缓存已清空", NC)
         return
-    log.color(f"    ✅ 已清除 {len(stale)} 个过期的commit缓存", GREEN)
+    log.color(f"    ✅ 已清除 {len(stale)} 个过期提交", GREEN)
 
 
 def sorted_cache_files(cache_dir: Path) -> list[Path]:
@@ -1203,7 +1205,7 @@ def analyze_repo(
     repo_id: str = "",
     full_name: str = "",
 ) -> bool:
-    log.color("    📊 开始分析commits...", YELLOW)
+    log.color("    📊 开始分析...", YELLOW)
 
     cache = load_cache(app, repo_name, log, repo_id)
 
@@ -1226,20 +1228,23 @@ def analyze_repo(
     is_api_fallback = False
     if not commits:
         if repo_path:
-            log.color("    ⚠️  Git log 无数据，尝试 API 兜底...", YELLOW)
+            log.color("    ⚠️  git log 无数据，改用 API...", YELLOW)
         commits = get_commits_from_api(app, owner, repo_name, branch, log)
         is_api_fallback = bool(commits)
         if commits:
-            log.color(f"    ✅ 使用 API 兜底数据: {len(commits)} 个commits", GREEN)
-            log.color("    ⚠️  注意: API 有分页限制，超出范围的老数据将保留缓存", YELLOW)
+            log.color(
+                f"    ✅ {len(commits)} 个提交（API，分页上限外的旧数据保留缓存）",
+                GREEN,
+            )
         else:
-            log.color("    ℹ️  未找到commits", NC)
+            log.color("    ⊘ 未找到提交", NC)
             return False
     else:
-        log.color(f"    ✅ 使用 Git log（完整历史）: {len(commits)} 个commits", GREEN)
+        log.color(
+            f"    ✅ {len(commits)} 个提交（git log，{len(emails)} 个邮箱）", GREEN
+        )
 
     total_commits = len(commits)
-    log.color(f"    📊 最终使用 {total_commits} 个commits", NC)
 
     old_count = len(cache.get(repo_name, []))
     clean_stale_cache(cache, commits, repo_name, owner, is_api_fallback, log)
@@ -1271,7 +1276,7 @@ def analyze_repo(
     for processed, (sha, date) in enumerate(commits, start=1):
         if processed % progress_interval == 0:
             pct = processed * 100 // total_commits
-            log.color(f"    📊 处理中: {processed}/{total_commits} ({pct}%)", NC)
+            log.color(f"    ⏳ 处理中 {processed}/{total_commits}（{pct}%）", NC)
 
         url = f"https://github.com/{owner}/{repo_name}/commit/{sha}"
         hit = cache_index.get(url)
@@ -1307,20 +1312,20 @@ def analyze_repo(
     if repo_path and missing and not details:
         log.color("    ⚠️  git 详情获取失败，统计数据可能不完整", YELLOW)
 
-    log.color("    💾 缓存统计:", YELLOW)
-    log.color(f"       - 缓存命中: {cache_hits} 个commit", NC)
-    log.color(f"       - 缓存未命中: {cache_misses} 个commit", NC)
+    log.color("    💾 缓存:", YELLOW)
+    log.color(f"      - 命中 {cache_hits} 个提交", NC)
+    log.color(f"      - 未命中 {cache_misses} 个提交", NC)
     if total_commits:
-        log.color(f"       - 缓存命中率: {cache_hits / total_commits * 100:.1f}%", NC)
+        log.color(f"      - 命中率 {cache_hits / total_commits * 100:.1f}%", NC)
 
     net = total_additions - total_deletions
     net_sign = "+" if net >= 0 else ""
     log.color(
-        f"    ✅ +{format_number(total_additions)} / -{format_number(total_deletions)} "
-        f"(net {net_sign}{format_number(net)})",
+        f"    ✅ +{format_number(total_additions)} / -{format_number(total_deletions)}"
+        f"（净 {net_sign}{format_number(net)}）",
         GREEN,
     )
-    log.color(f"      🖼️ 图片: {total_images} images", GREEN)
+    log.color(f"      🖼️ 图片 {total_images} 张", GREEN)
 
     saved_changed = save_cache(app, repo_name, cache, log, repo_id, full_name)
     return cache_misses > 0 or stale_cleaned or saved_changed
@@ -1409,7 +1414,7 @@ def save_contributions_svg(app: App, content: str) -> bool:
     except OSError as exc:
         print_color(f"❌ 保存 SVG 失败: {exc}", RED)
         return False
-    print_color(f"✅ SVG 卡片已生成: {app.svg_path}", GREEN)
+    print_color(f"✅ SVG 卡片已生成: {short_path(app.svg_path)}", GREEN)
     return True
 
 
@@ -1453,7 +1458,6 @@ def update_readme(app: App, stats: dict) -> bool:
     print_color("📝 更新 README.md...", YELLOW)
 
     if app.template_path.exists():
-        print_color("📄 使用模板系统生成 README", GREEN)
         content = read_text_normalized(app.template_path)
         content = replace_placeholders(
             content,
@@ -1463,9 +1467,8 @@ def update_readme(app: App, stats: dict) -> bool:
                 "CONTRIBUTIONS_CARD_SRC": "contributions.svg",
             },
         )
-        print_color("✅ 已从模板生成完整的 README", GREEN)
     elif app.readme_path.exists():
-        print_color("⚠️  未发现模板文件，更新现有 README", YELLOW)
+        print_color("  ℹ️  无模板文件，直接更新现有 README", NC)
         content = read_text_normalized(app.readme_path)
         content = update_variable_definition(
             content, "ORIGIN_USERNAME", app.origin_username
@@ -1488,7 +1491,7 @@ def update_readme(app: App, stats: dict) -> bool:
         else:
             print_color("ℹ️  未发现占位符，内容已包含真实用户名", YELLOW)
     else:
-        print_color("❌ README.md 不存在！", RED)
+        print_color("❌ README.md 不存在", RED)
         return False
 
     try:
@@ -1497,18 +1500,8 @@ def update_readme(app: App, stats: dict) -> bool:
         print_color(f"❌ 保存 README 失败: {exc}", RED)
         return False
 
-    net = stats["total_additions"] - stats["total_deletions"]
-    net_sign = "+" if net >= 0 else ""
-    print_color("✅ README.md 更新成功！", GREEN)
-    print_color(
-        f"   ✍️  +{format_number(stats['total_additions'])} / "
-        f"-{format_number(stats['total_deletions'])} (net {net_sign}{format_number(net)})",
-        NC,
-    )
-    print_color(f"   🖼️  图片数量: {format_number(stats['total_images'])}", NC)
-    print_color(f"   🕒 最新 commit: {stats['latest_commit_timestamp']}", NC)
-    print_color(f"   👤 远端用户名: {app.origin_username}", NC)
-    print_color(f"   👑 上游用户名: {app.upstream_username}", NC)
+    print_color("✅ README.md 已更新", GREEN)
+    print_color(f"  🕒 最新提交 {stats['latest_commit_timestamp']}", NC)
     return True
 
 
@@ -1754,14 +1747,19 @@ def run() -> int:
         app.behavior.get("separator_length", DEFAULT_SEPARATOR_LENGTH)
     )
 
-    print_separator("🚀 开始生成 GitHub 统计...", GREEN, separator_length)
-    print_color("📊 统计配置:", YELLOW)
-    print_color(f"   - 缓存目录: {app.cache_dir}", NC)
+    print_separator("🚀 开始生成 GitHub 统计", GREEN, separator_length)
+    print_color("📊 统计配置", YELLOW)
+    print_color(f"  - 远端用户 {app.origin_username}", NC)
+    print_color(f"  - 上游用户 {app.upstream_username}", NC)
+    print_color(f"  - 缓存目录 {short_path(app.cache_dir)}", NC)
+    print_color(
+        f"  - 并发度 {app.behavior.get('concurrency', DEFAULT_CONCURRENCY)}", NC
+    )
     print_separator(None, GREEN, separator_length)
 
     if clear_cache:
         if app.cache_dir.exists():
-            print_color(f"🗑️  清除缓存目录: {app.cache_dir}", YELLOW)
+            print_color(f"🗑️  清除缓存目录 {short_path(app.cache_dir)}", YELLOW)
             try:
                 shutil.rmtree(app.cache_dir)
                 print_color("✅ 缓存已清除", GREEN)
@@ -1769,10 +1767,10 @@ def run() -> int:
                 print_color(f"❌ 清除缓存失败: {exc}", RED)
                 return 1
         else:
-            print_color(f"ℹ️  缓存目录不存在: {app.cache_dir}", NC)
+            print_color(f"ℹ️  缓存目录不存在 {short_path(app.cache_dir)}", NC)
         repos_dir = PROJECT_ROOT / "temp_repos"
         if repos_dir.exists():
-            print_color(f"🗑️  清除本地克隆: {repos_dir}", YELLOW)
+            print_color(f"🗑️  清除本地克隆 {short_path(repos_dir)}", YELLOW)
             try:
                 shutil.rmtree(repos_dir)
                 print_color("✅ 本地克隆已清除", GREEN)
@@ -1828,19 +1826,20 @@ def run() -> int:
         )
 
     if not any_changed:
-        print_separator("✅ 脚本执行完成（无变更）", GREEN, separator_length)
+        print_separator("✅ 完成（无变更）", GREEN, separator_length)
         return exit_code
 
     stats = aggregate_stats_from_cache(app)
     net = stats["total_additions"] - stats["total_deletions"]
     net_sign = "+" if net >= 0 else ""
-    print_separator("📈 汇总统计（来自缓存文件 _metadata）", GREEN, separator_length)
+    print_separator("📈 汇总统计", GREEN, separator_length)
     print_color(
         f"  ✍️  +{format_number(stats['total_additions'])} / "
-        f"-{format_number(stats['total_deletions'])} (net {net_sign}{format_number(net)})",
+        f"-{format_number(stats['total_deletions'])}"
+        f"（净 {net_sign}{format_number(net)}）",
         GREEN,
     )
-    print_color(f"  🖼️  总 images: {format_number(stats['total_images'])}", GREEN)
+    print_color(f"  🖼️  图片 {format_number(stats['total_images'])} 张", GREEN)
     print_separator(None, GREEN, separator_length)
 
     svg_content = generate_contributions_svg(app, stats, app.origin_username)
@@ -1850,7 +1849,7 @@ def run() -> int:
     if not update_readme(app, stats):
         return 1
 
-    print_separator("✅ 脚本执行完成！", GREEN, separator_length)
+    print_separator("✅ 完成", GREEN, separator_length)
     return 0
 
 
