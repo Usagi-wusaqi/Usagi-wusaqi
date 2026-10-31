@@ -67,6 +67,3 @@ Thumbs.db
 temp_repos/
 *.tmp
 *.temp
-
-# 统计脚本运行产物（本地重建，CI 由 actions/cache 持久化）
-scripts/stats_cache/

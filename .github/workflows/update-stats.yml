@@ -80,16 +80,14 @@ jobs:
           echo "REPO_OWNER_ID=$REPO_OWNER_ID" >> $GITHUB_OUTPUT
           echo "✅ 目标用户已确定"
 
-      # 恢复统计缓存，本次只需处理增量 commit
-      # 只缓存这个目录：temp_repos 里是按需拉取的历史 blob，
-      # 会累积到上百 MB，打包解压比重新做一次 blobless 克隆还慢
-      - name: 恢复统计缓存
+      # 恢复上次的仓库克隆，本次只需增量 fetch
+      - name: 恢复仓库克隆缓存
         uses: actions/cache/restore@v4
         with:
-          path: scripts/stats_cache
-          key: stats-cache-${{ github.run_id }}
+          path: temp_repos
+          key: stats-repos-${{ github.run_id }}
           restore-keys: |
-            stats-cache-
+            stats-repos-
 
       # 生成统计数据
       - name: 生成统计数据
@@ -127,13 +125,13 @@ jobs:
 
           echo "✅ 统计数据生成成功"
 
-      # 保存本次统计缓存，供下次增量使用
-      - name: 保存统计缓存
+      # 保存本次克隆，供下次增量使用
+      - name: 保存仓库克隆缓存
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: scripts/stats_cache
-          key: stats-cache-${{ github.run_id }}
+          path: temp_repos
+          key: stats-repos-${{ github.run_id }}
 
       # 检查是否有更改
       - name: 检查是否有更改
@@ -200,7 +198,7 @@ jobs:
           git config --global user.email "$BOT_EMAIL"
 
           # 添加更改
-          git add README.md config.toml contributions.svg
+          git add README.md config.toml contributions.svg scripts/stats_cache/
 
           # 根据上一提交决定是新建提交还是压缩进上一提交
           if [ "${{ steps.detect-amend.outputs.should_amend }}" = "true" ]; then
