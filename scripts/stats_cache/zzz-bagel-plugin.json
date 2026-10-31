@@ -1,0 +1,8 @@
+{
+  "_metadata": {"total_commits": 2, "total_additions": 19450, "total_deletions": 9, "total_images": 47, "latest_commit_timestamp": "2026-11-02T14:21:57+08:00", "repo_id": "1442433421", "full_name": "Usagi-wusaqi/zzz-bagel-plugin"},
+  "data": {"zzz-bagel-plugin": [
+      {"timestamp": "2026-10-31T20:43:12+08:00", "index": 1, "additions": 19434, "deletions": 0, "images": 47, "url": "https://github.com/Cora093/zzz-bagel-plugin/commit/e1a747e34ffdfd5949005448e81905a2dac75e25"}
+      ,{"timestamp": "2026-11-02T14:21:57+08:00", "index": 2, "additions": 16, "deletions": 9, "images": 0, "url": "https://github.com/Cora093/zzz-bagel-plugin/commit/786c3f068efd54fdfa50531f6ef9aae84389b623"}
+    ]
+  }
+}
