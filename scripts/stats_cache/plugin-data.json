@@ -1,0 +1,12 @@
+{
+  "_metadata": {"total_commits": 6, "total_additions": 22, "total_deletions": 12, "total_images": 0, "latest_commit_timestamp": "2026-10-31T21:01:18+08:00", "repo_id": "1431777103", "full_name": "Usagi-wusaqi/plugin-data"},
+  "data": {"plugin-data": [
+      {"timestamp": "2026-10-24T12:47:21+08:00", "index": 1, "additions": 5, "deletions": 1, "images": 0, "url": "https://github.com/OneDragon-Anyone/plugin-data/commit/b62fcb99738c8180f0971d734f6d4e4a37eb333c"}
+      ,{"timestamp": "2026-10-31T15:00:25+08:00", "index": 2, "additions": 7, "deletions": 1, "images": 0, "url": "https://github.com/OneDragon-Anyone/plugin-data/commit/4d7a0e3c2936bc5fb313f55f20e63c4711793b14"}
+      ,{"timestamp": "2026-10-31T15:00:47+08:00", "index": 3, "additions": 1, "deletions": 1, "images": 0, "url": "https://github.com/OneDragon-Anyone/plugin-data/commit/202a3d6aca02ad131c18236700badf56484d1b84"}
+      ,{"timestamp": "2026-10-31T15:47:20+08:00", "index": 4, "additions": 0, "deletions": 0, "images": 0, "url": "https://github.com/OneDragon-Anyone/plugin-data/commit/5e0f996011bbf297feb0870556b7685fdd8720db"}
+      ,{"timestamp": "2026-10-31T15:49:23+08:00", "index": 5, "additions": 1, "deletions": 1, "images": 0, "url": "https://github.com/OneDragon-Anyone/plugin-data/commit/4ccd1272be3d58c70adb231ed0e3163988a0f2bb"}
+      ,{"timestamp": "2026-10-31T21:01:18+08:00", "index": 6, "additions": 8, "deletions": 8, "images": 0, "url": "https://github.com/OneDragon-Anyone/plugin-data/commit/b2a6c37c70c46bc588f999e658823e683ad54dbf"}
+    ]
+  }
+}
