@@ -32,7 +32,6 @@ I'm a code enthusiast who loves turning ideas into reality through code. With a 
 <table width="100%">
   <tr>
     <td align="center" valign="top" width="50%">
-      <img src="contributions.svg" alt="Code Contributions" width="100%"/><br>
       <img src="https://github-stats-extended.vercel.app/api?username=Usagi-wusaqi&show_icons=true&locale=en&include_all_commits=true&rank_icon=percentile&show=contributions,all_time_contribs,reviews,discussions_started,discussions_answered,prs_merged,prs_merged_percentage,prs_authored,prs_commented,prs_reviewed,issues_authored,issues_commented&count_private=true&disable_animations=true&hide_border=true&hide_title=true" alt="GitHub stats" width="100%" />
     </td>
     <td align="center" valign="top" width="50%">

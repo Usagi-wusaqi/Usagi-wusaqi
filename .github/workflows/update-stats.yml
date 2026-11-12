@@ -1,10 +1,8 @@
 name: 更新 README 统计数据
 
+# 定时统计已停用：README 不再展示贡献卡片，仅保留手动触发入口
 on:
   workflow_dispatch:
-  schedule:
-    # 每天 23:59 北京时间 (UTC+8 → 15:59 UTC)
-    - cron: '59 15 * * *'
 
 permissions:
   contents: write
@@ -198,7 +196,7 @@ jobs:
           git config --global user.email "$BOT_EMAIL"
 
           # 添加更改
-          git add README.md config.toml contributions.svg scripts/stats_cache/
+          git add README.md config.toml scripts/stats_cache/
 
           # 根据上一提交决定是新建提交还是压缩进上一提交
           if [ "${{ steps.detect-amend.outputs.should_amend }}" = "true" ]; then
