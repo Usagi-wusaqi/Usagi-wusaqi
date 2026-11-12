@@ -32,11 +32,11 @@ I'm a code enthusiast who loves turning ideas into reality through code. With a 
 <table width="100%">
   <tr>
     <td align="center" valign="top" width="50%">
-      <img src="https://github-stats-extended.vercel.app/api?username=Usagi-wusaqi&show_icons=true&locale=en&include_all_commits=true&rank_icon=percentile&show=contributions,all_time_contribs,reviews,discussions_started,discussions_answered,prs_merged,prs_merged_percentage,prs_authored,prs_commented,prs_reviewed,issues_authored,issues_commented&count_private=true&hide_border=true&hide_title=true" alt="GitHub stats" width="100%" />
+      <img src="https://github-stats-extended.vercel.app/api?username=Usagi-wusaqi&show_icons=true&locale=en&include_all_commits=true&rank_icon=percentile&show=contributions,all_time_contribs,reviews,discussions_started,discussions_answered,prs_merged,prs_merged_percentage,prs_authored,prs_commented,prs_reviewed,issues_authored,issues_commented&count_private=true&hide_border=true" alt="GitHub stats" width="100%" />
     </td>
     <td align="center" valign="top" width="50%">
       <img src="https://github-profile-summary-cards.vercel.app/api/cards/profile-details?username=Usagi-wusaqi&theme=default&border_color=ffffff00" alt="GitHub Activity Graph" width="100%" /><br>
-      <img src="https://github-stats-extended.vercel.app/api/top-langs?username=Usagi-wusaqi&show_icons=true&locale=en&layout=compact&include_all_commits=true&langs_count=20&hide_border=true&hide_title=true" alt="Languages" width="100%" />
+      <img src="https://github-stats-extended.vercel.app/api/top-langs?username=Usagi-wusaqi&show_icons=true&locale=en&layout=compact&include_all_commits=true&langs_count=20&hide_border=true" alt="Languages" width="100%" />
     </td>
   </tr>
 </table>
