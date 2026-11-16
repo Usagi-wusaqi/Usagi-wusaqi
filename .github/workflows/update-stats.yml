@@ -1,14 +1,16 @@
-name: 更新 README 统计数据
+name: 更新贡献卡片
 
-# 定时统计已停用：README 不再展示贡献卡片，仅保留手动触发入口
 on:
   workflow_dispatch:
 
+# 统计产物发布到 GitHub Pages，不向 main 写入任何提交
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
 
 # 同一时间只保留一个实例：手动触发撞上定时任务时排队执行，
-# 避免两个运行同时改写统计文件后互相覆盖
+# 避免两个运行同时部署或互相覆盖缓存
 concurrency:
   group: update-stats
   cancel-in-progress: false
@@ -16,7 +18,11 @@ concurrency:
 jobs:
   update-stats:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 统计脚本内部 25 分钟超时，camo 同步最多再等 5 分钟，留出余量避免被整体掐断
+    timeout-minutes: 40
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
       # 检出代码仓库
@@ -30,6 +36,10 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
+
+      # 配置 Pages（仓库设置里 Source 需选 GitHub Actions）
+      - name: 配置 Pages
+        uses: actions/configure-pages@v5
 
       # 确定目标用户
       - name: 确定目标用户
@@ -75,7 +85,6 @@ jobs:
 
           echo "ORIGIN_USERNAME=$ORIGIN_USERNAME" >> $GITHUB_OUTPUT
           echo "UPSTREAM_USERNAME=$UPSTREAM_USERNAME" >> $GITHUB_OUTPUT
-          echo "REPO_OWNER_ID=$REPO_OWNER_ID" >> $GITHUB_OUTPUT
           echo "✅ 目标用户已确定"
 
       # 恢复上次的仓库克隆，本次只需增量 fetch
@@ -86,6 +95,11 @@ jobs:
           key: stats-repos-${{ github.run_id }}
           restore-keys: |
             stats-repos-
+
+      # 统计缓存由 Pages 托管：跑之前从站点拉回，跑完连同卡片一起部署
+      - name: 从 Pages 恢复统计缓存
+        id: restore-cache
+        run: python3 scripts/pipeline.py restore
 
       # 生成统计数据
       - name: 生成统计数据
@@ -113,17 +127,12 @@ jobs:
           # 运行脚本，带超时和错误处理
           timeout 25m python3 scripts/generate_stats.py || {
             echo "❌ 统计生成失败或超时"
-            echo "📋 检查部分结果..."
-            if [ -f "README.md" ]; then
-              echo "✅ README.md 存在，检查更改..."
-              git diff --name-only
-            fi
             exit 1
           }
 
           echo "✅ 统计数据生成成功"
 
-      # 保存本次克隆，供下次增量使用
+      # 保存本次克隆，供下次增量使用（仓库克隆不适合放 Pages，仍走 Actions 缓存）
       - name: 保存仓库克隆缓存
         if: always()
         uses: actions/cache/save@v4
@@ -131,110 +140,40 @@ jobs:
           path: temp_repos
           key: stats-repos-${{ github.run_id }}
 
-      # 检查是否有更改
-      - name: 检查是否有更改
-        id: check-changes
-        run: |
-          if git diff --quiet && git diff --cached --quiet; then
-            echo "changes=false" >> $GITHUB_OUTPUT
-            echo "ℹ️  未检测到更改"
-          else
-            echo "changes=true" >> $GITHUB_OUTPUT
-            echo "📝 检测到更改:"
-            git diff --name-only
-          fi
+      # 卡片 + 统计缓存一起托管，站点上都能直接打开查看
+      - name: 准备 Pages 产物
+        id: prepare-site
+        run: python3 scripts/pipeline.py site
 
-      # 检查上一提交是否为可压缩的统计提交
-      - name: 检查上一提交是否需要压缩
-        id: detect-amend
-        if: steps.check-changes.outputs.changes == 'true'
+      - name: 上传 Pages 产物
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: 部署到 Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      # GitHub 的 camo 图片代理按源站 Cache-Control 缓存，Pages 固定 max-age=600。
+      # 部署完成后清除该卡片的 camo 缓存，新访客即可取到本次生成的版本
+      - name: 刷新 camo 缓存
+        id: purge
         env:
-          ORIGIN_USERNAME: ${{ steps.determine-users.outputs.ORIGIN_USERNAME }}
-          REPO_OWNER_ID: ${{ steps.determine-users.outputs.REPO_OWNER_ID }}
-        run: |
-          LAST_SUBJECT="$(git log -1 --pretty=%s)"
-          LAST_AUTHOR_NAME="$(git log -1 --pretty=%an)"
-          LAST_AUTHOR_EMAIL="$(git log -1 --pretty=%ae)"
-          echo "📌 上一提交标题: $LAST_SUBJECT"
-          echo "📌 上一提交作者: $LAST_AUTHOR_NAME <$LAST_AUTHOR_EMAIL>"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: python3 scripts/pipeline.py purge
 
-          IS_STATS_COMMIT=false
-          if [ "$LAST_SUBJECT" = "📊 更新统计（自动）" ]; then
-            IS_STATS_COMMIT=true
-          fi
-
-          EXPECTED_AUTHOR_NAME="$ORIGIN_USERNAME"
-          EXPECTED_AUTHOR_EMAIL="${REPO_OWNER_ID}+${ORIGIN_USERNAME}@users.noreply.github.com"
-
-          ACTION_IS_AUTHOR=false
-          if [ "$LAST_AUTHOR_NAME" = "$EXPECTED_AUTHOR_NAME" ] && [ "$LAST_AUTHOR_EMAIL" = "$EXPECTED_AUTHOR_EMAIL" ]; then
-            ACTION_IS_AUTHOR=true
-          fi
-
-          if [ "$IS_STATS_COMMIT" = "true" ] && [ "$ACTION_IS_AUTHOR" = "true" ]; then
-            echo "should_amend=true" >> $GITHUB_OUTPUT
-            echo "✅ 上一提交由统计工作流生成，本次将压缩进上一提交"
-          else
-            echo "should_amend=false" >> $GITHUB_OUTPUT
-            echo "ℹ️  上一提交不是可压缩的统计提交，本次将创建新提交"
-          fi
-
-      # 提交并推送
-      - name: 提交并推送
-        if: steps.check-changes.outputs.changes == 'true'
-        env:
-          ORIGIN_USERNAME: ${{ steps.determine-users.outputs.ORIGIN_USERNAME }}
-          REPO_OWNER_ID: ${{ steps.determine-users.outputs.REPO_OWNER_ID }}
-        run: |
-          echo "📤 正在提交和推送更改..."
-
-          # 配置 git
-          BOT_NAME="$ORIGIN_USERNAME"
-          BOT_EMAIL="${REPO_OWNER_ID}+${ORIGIN_USERNAME}@users.noreply.github.com"
-          BOT_AUTHOR="$BOT_NAME <$BOT_EMAIL>"
-          git config --global user.name "$BOT_NAME"
-          git config --global user.email "$BOT_EMAIL"
-
-          # 添加更改
-          git add README.md config.toml scripts/stats_cache/
-
-          # 根据上一提交决定是新建提交还是压缩进上一提交
-          if [ "${{ steps.detect-amend.outputs.should_amend }}" = "true" ]; then
-            echo "🧩 检测到连续统计提交，压缩进上一提交..."
-
-            git commit --amend \
-              --author="$BOT_AUTHOR" \
-              -m "📊 更新统计（自动）"
-
-            if git push --force-with-lease origin HEAD:${{ github.ref_name }}; then
-              echo "✅ 压缩后的提交推送成功"
-            else
-              echo "❌ 压缩后的提交推送失败"
-              exit 1
-            fi
-          else
-            echo "🆕 创建新的统计提交..."
-
-            git commit \
-              --author="$BOT_AUTHOR" \
-              -m "📊 更新统计（自动）"
-
-            if git push origin HEAD:${{ github.ref_name }}; then
-              echo "✅ 更改推送成功"
-            else
-              echo "❌ 推送更改失败"
-              exit 1
-            fi
-          fi
-
-      # 摘要
+      # 运行摘要：写入 Step Summary，显示在 Actions 运行页顶部
       - name: 摘要
         if: always()
-        run: |
-          echo "📋 工作流摘要:"
-          echo "- 仓库: ${{ github.repository }}"
-          echo "- 触发方式: ${{ github.event_name }}"
-          echo "- 远端用户名: ${{ steps.determine-users.outputs.ORIGIN_USERNAME }}"
-          echo "- 上游用户名: ${{ steps.determine-users.outputs.UPSTREAM_USERNAME }}"
-          echo "- 是否有更改: ${{ steps.check-changes.outputs.changes || 'unknown' }}"
-          echo "- 是否压缩进上一提交: ${{ steps.detect-amend.outputs.should_amend || 'false' }}"
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ORIGIN: ${{ steps.determine-users.outputs.ORIGIN_USERNAME }}
+          UPSTREAM: ${{ steps.determine-users.outputs.UPSTREAM_USERNAME }}
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+          DEPLOY: ${{ steps.deployment.outcome }}
+          RESTORED: ${{ steps.restore-cache.outputs.restored }}
+          RESTORE_FAILED: ${{ steps.restore-cache.outputs.failed }}
+          PURGE_RESULT: ${{ steps.purge.outputs.result }}
+          PURGE_DETAIL: ${{ steps.purge.outputs.detail }}
+        run: python3 scripts/pipeline.py summary
