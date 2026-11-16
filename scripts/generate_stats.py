@@ -232,8 +232,6 @@ class App:
         set_git_auth(token)
 
         self.config_path = PROJECT_ROOT / "config.toml"
-        self.readme_path = PROJECT_ROOT / "README.md"
-        self.template_path = PROJECT_ROOT / "README.template.md"
         self.svg_path = PROJECT_ROOT / "contributions.svg"
         self.cache_dir = SCRIPT_DIR / "stats_cache"
 
@@ -1419,93 +1417,6 @@ def save_contributions_svg(app: App, content: str) -> bool:
 
 
 # ============================================================================
-# README
-# ============================================================================
-
-
-def read_text_normalized(path: Path) -> str:
-    return (
-        path.read_text(encoding="utf-8", errors="replace")
-        .replace("\r\n", "\n")
-        .replace("\r", "\n")
-    )
-
-
-def replace_placeholders(content: str, replacements: dict[str, str]) -> str:
-    for key, value in replacements.items():
-        content = content.replace("{{" + key + "}}", value)
-    return content
-
-
-def update_variable_definition(content: str, var_name: str, var_value: str) -> str:
-    pattern = re.compile(
-        rf"(^[ \t]*{re.escape(var_name)}[ \t]*=[ \t]*)(.*)$", re.MULTILINE
-    )
-    found = False
-
-    def repl(match: re.Match) -> str:
-        nonlocal found
-        found = True
-        return match.group(1) + var_value
-
-    result = pattern.sub(repl, content)
-    if found:
-        print_color(f"✅ 已更新 {var_name} 定义为: {var_value}", GREEN)
-    return result
-
-
-def update_readme(app: App, stats: dict) -> bool:
-    print_color("📝 更新 README.md...", YELLOW)
-
-    if app.template_path.exists():
-        content = read_text_normalized(app.template_path)
-        content = replace_placeholders(
-            content,
-            {
-                "ORIGIN_USERNAME": app.origin_username,
-                "UPSTREAM_USERNAME": app.upstream_username,
-                "CONTRIBUTIONS_CARD_SRC": "contributions.svg",
-            },
-        )
-    elif app.readme_path.exists():
-        print_color("  ℹ️  无模板文件，直接更新现有 README", NC)
-        content = read_text_normalized(app.readme_path)
-        content = update_variable_definition(
-            content, "ORIGIN_USERNAME", app.origin_username
-        )
-        content = update_variable_definition(
-            content, "UPSTREAM_USERNAME", app.upstream_username
-        )
-        placeholders = content.count("{{ORIGIN_USERNAME}}") + content.count(
-            "{{UPSTREAM_USERNAME}}"
-        )
-        if placeholders:
-            content = replace_placeholders(
-                content,
-                {
-                    "ORIGIN_USERNAME": app.origin_username,
-                    "UPSTREAM_USERNAME": app.upstream_username,
-                },
-            )
-            print_color(f"✅ 已替换 {placeholders} 个占位符为真实用户名", GREEN)
-        else:
-            print_color("ℹ️  未发现占位符，内容已包含真实用户名", YELLOW)
-    else:
-        print_color("❌ README.md 不存在", RED)
-        return False
-
-    try:
-        app.readme_path.write_text(content, encoding="utf-8", newline="\n")
-    except OSError as exc:
-        print_color(f"❌ 保存 README 失败: {exc}", RED)
-        return False
-
-    print_color("✅ README.md 已更新", GREEN)
-    print_color(f"  🕒 最新提交 {stats['latest_commit_timestamp']}", NC)
-    return True
-
-
-# ============================================================================
 # 仓库并发处理
 # ============================================================================
 
@@ -1818,16 +1729,15 @@ def run() -> int:
         print_color(f"❌ {app.rate_limit}", RED)
         return 1
 
-    # 失败的仓库沿用上次缓存，汇总仍自洽；退出码单独标记本次不完整
-    exit_code = 1 if failed else 0
+    # 失败的仓库沿用上次缓存，汇总仍自洽
     if failed:
         print_color(
             f"❌ {len(failed)} 个仓库未能完成，结果可能不完整: {', '.join(failed)}", RED
         )
 
+    # 产物只发布到 Pages，不再写回仓库；即使数据没变也要重新生成卡片
     if not any_changed:
-        print_separator("✅ 完成（无变更）", GREEN, separator_length)
-        return exit_code
+        print_color("ℹ️  数据无变化，仍重新生成卡片供 Pages 发布", NC)
 
     stats = aggregate_stats_from_cache(app)
     net = stats["total_additions"] - stats["total_deletions"]
@@ -1846,7 +1756,9 @@ def run() -> int:
     if not save_contributions_svg(app, svg_content):
         return 1
 
-    if not update_readme(app, stats):
+    # 有仓库未完成时结果不完整，不发布，由工作流保持站点的上一版
+    if failed:
+        print_color("❌ 结果不完整，本次不发布", RED)
         return 1
 
     print_separator("✅ 完成", GREEN, separator_length)
