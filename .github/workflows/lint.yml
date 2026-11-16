@@ -15,18 +15,14 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - name: Set up Node
+        uses: actions/setup-node@v4
         with:
-          python-version: "3.11"
+          node-version: "22"
 
-      - name: Install Ruff
-        run: pip install ruff
+      # 不装任何依赖，只用 Node 自带的语法检查
+      - name: Syntax check
+        run: node --check scripts/generate_stats.js && node --check scripts/pipeline.js
 
-      - name: Run Ruff Lint
-        run: |
-          ruff check scripts/ --select E,W,F,I,B,UP,SIM,TID --ignore E501
-
-      - name: Run Ruff Format Check
-        run: |
-          ruff format scripts/ --check
+      - name: Run tests
+        run: node --test

@@ -1,0 +1,13 @@
+{
+  "name": "usagi-wusaqi-stats",
+  "private": true,
+  "type": "module",
+  "description": "主页的贡献统计与 Pages 发布脚本，零依赖",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "lint": "node --check scripts/generate_stats.js && node --check scripts/pipeline.js",
+    "test": "node --test"
+  }
+}

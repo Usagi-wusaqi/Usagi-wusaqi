@@ -34,11 +34,11 @@ jobs:
         with:
           fetch-depth: 0  # 获取完整历史以便更好的 git log 分析
 
-      # 设置 Python
-      - name: 设置 Python
-        uses: actions/setup-python@v6
+      # 设置 Node
+      - name: 设置 Node
+        uses: actions/setup-node@v4
         with:
-          python-version: "3.11"
+          node-version: "22"
 
       # 配置 Pages（仓库设置里 Source 需选 GitHub Actions）
       - name: 配置 Pages
@@ -109,7 +109,7 @@ jobs:
           start=$(date +%s)
           # 本步开始到上一步结束之间只隔着 cache/restore
           echo "SEC_CLONE=$(( start - ${T_CACHE:-$start} ))" >> $GITHUB_ENV
-          python3 scripts/pipeline.py restore && rc=0 || rc=$?
+          node scripts/pipeline.js restore && rc=0 || rc=$?
           echo "SEC_RESTORE=$(( $(date +%s) - start ))" >> $GITHUB_ENV
           exit $rc
 
@@ -138,7 +138,7 @@ jobs:
 
           # 运行脚本，带超时和错误处理
           start=$(date +%s)
-          timeout 25m python3 scripts/generate_stats.py && rc=0 || rc=$?
+          timeout 25m node scripts/generate_stats.js && rc=0 || rc=$?
           # 失败也要记下用时，摘要才看得出卡在哪
           echo "SEC_STATS=$(( $(date +%s) - start ))" >> $GITHUB_ENV
           if [ "$rc" -ne 0 ]; then
@@ -161,7 +161,7 @@ jobs:
         id: prepare-site
         run: |
           start=$(date +%s)
-          python3 scripts/pipeline.py site && rc=0 || rc=$?
+          node scripts/pipeline.js site && rc=0 || rc=$?
           echo "SEC_SITE=$(( $(date +%s) - start ))" >> $GITHUB_ENV
           # 上传和部署是两个 uses 步骤，把边界时间交给下一步算
           echo "T_DEPLOY=$(date +%s)" >> $GITHUB_ENV
@@ -188,7 +188,7 @@ jobs:
           if [ -n "$T_DEPLOY" ]; then
             echo "SEC_DEPLOY=$(( start - T_DEPLOY ))" >> $GITHUB_ENV
           fi
-          python3 scripts/pipeline.py purge && rc=0 || rc=$?
+          node scripts/pipeline.js purge && rc=0 || rc=$?
           echo "SEC_PURGE=$(( $(date +%s) - start ))" >> $GITHUB_ENV
           exit $rc
 
@@ -209,4 +209,4 @@ jobs:
           if [ -n "$T_START" ]; then
             export SEC_TOTAL=$(( $(date +%s) - T_START ))
           fi
-          python3 scripts/pipeline.py summary
+          node scripts/pipeline.js summary

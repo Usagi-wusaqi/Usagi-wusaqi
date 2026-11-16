@@ -1,51 +1,13 @@
-# Python 缓存文件
-__pycache__/
-*.py[cod]
-*$py.class
+# Node 依赖与日志（本项目零依赖，仅防误装）
+node_modules/
+npm-debug.log*
+yarn-error.log*
 
-# 分发 / 打包
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# PyInstaller
-*.manifest
-*.spec
-
-# 单元测试 / 覆盖率报告
-htmlcov/
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
-.pytest_cache/
+# 依赖锁文件（不引入第三方包，无需固定）
+package-lock.json
 
 # 环境变量
 .env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
 
 # IDE
 .vscode/
@@ -72,6 +34,3 @@ temp_repos/
 contributions.svg
 scripts/stats_cache/
 _site/
-
-# 本地 lint 缓存
-.ruff_cache/

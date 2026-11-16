@@ -13,23 +13,23 @@
 - 部署完成后清除图片代理的缓存，新访客即时取到最新卡片。
 - 站点根路径提供索引页，可直接浏览卡片与各仓库明细。
 - 提交归属按账号邮箱判定，含 `Co-authored-by` 共同作者。
-- 仅依赖 Python 标准库，Fork 后自动适配仓库归属。
+- 仅依赖 Node 内置模块，Fork 后自动适配仓库归属。
 
 ## 工作原理
 
 ```
 GitHub REST API / git log
         ↓ 仓库列表、提交元数据、增删行数
-scripts/generate_stats.py
+scripts/generate_stats.js
         ↓ scripts/stats_cache/<repo>.json + contributions.svg
-scripts/pipeline.py site
+scripts/pipeline.js site
         ↓ _site/（卡片 + index.html + data/*.json + data/manifest.json）
-upload-pages-artifact → deploy-pages → pipeline.py purge
+upload-pages-artifact → deploy-pages → pipeline.js purge
         ↓
 GitHub Pages ← README.md 中的固定图片链接
 ```
 
-流程分四层：API 与本地 git 克隆提供原始数据；`generate_stats.py` 完成提交过滤、指标聚合与 SVG 渲染；`pipeline.py` 负责与站点之间的读写，即读回缓存、打包产物、清除代理缓存与写运行摘要；Pages 对外提供静态访问。卡片内容每日替换，主页无需改动。
+流程分四层：API 与本地 git 克隆提供原始数据；`generate_stats.js` 完成提交过滤、指标聚合与 SVG 渲染；`pipeline.js` 负责与站点之间的读写，即读回缓存、打包产物、清除代理缓存与写运行摘要；Pages 对外提供静态访问。卡片内容每日替换，主页无需改动。
 
 ## 目录结构
 
@@ -37,18 +37,20 @@ GitHub Pages ← README.md 中的固定图片链接
 .
 ├── README.md                        # 个人主页，静态文件，人工维护
 ├── config.toml                      # API、SVG 样式与运行参数
+├── package.json                     # ESM 声明与检查/测试命令，无第三方依赖
 ├── scripts/
-│   ├── generate_stats.py            # 数据采集、缓存、聚合与 SVG 生成
-│   └── pipeline.py                  # 站点读写：读回缓存、打包产物、清缓存、写摘要
+│   ├── generate_stats.js            # 数据采集、缓存、聚合与 SVG 生成
+│   ├── pipeline.js                  # 站点读写：读回缓存、打包产物、清缓存、写摘要
+│   └── scripts.test.js              # 配置解析、卡片与序列化的单元测试
 ├── .github/workflows/
 │   ├── update-stats.yml             # 每日统计与 Pages 部署
-│   └── lint.yml                     # Ruff 检查与格式校验
+│   └── lint.yml                     # 语法检查与单元测试
 ├── .gitignore                       # 排除运行时产物与各类缓存
 ├── .gitattributes                   # 统一 LF 行尾，图片按二进制处理
 └── CONTRIBUTING.md                  # 仓库说明
 ```
 
-`generate_stats.py` 按职责分为配置加载、API 客户端、仓库枚举与 Fork 判定、克隆与提交采集、缓存读写、SVG 生成、并发调度及主流程等模块。`pipeline.py` 提供 `restore`、`site`、`purge`、`summary` 四个子命令，工作流只负责调用，两者都在 Ruff 的检查范围内。
+`generate_stats.js` 按职责分为配置加载、API 客户端、仓库枚举与 Fork 判定、克隆与提交采集、缓存读写、SVG 生成、并发调度及主流程等模块。`pipeline.js` 提供 `restore`、`site`、`purge`、`summary` 四个子命令，工作流只负责调用，两者都在语法检查与单元测试的覆盖范围内。
 
 ## 统计口径
 
@@ -67,7 +69,7 @@ GitHub Pages ← README.md 中的固定图片链接
 
 ## 自动化工作流
 
-`update-stats.yml` 在每日 23:59（北京时间，cron `59 15 * * *` UTC）触发，也支持 `workflow_dispatch` 手动运行。权限为 `contents: read`、`pages: write`、`id-token: write`；通过 `concurrency: update-stats` 保证同一时间只有一个实例、`cancel-in-progress: false`，运行于 `ubuntu-latest`、Python 3.11，整体超时 40 分钟。
+`update-stats.yml` 在每日 23:59（北京时间，cron `59 15 * * *` UTC）触发，也支持 `workflow_dispatch` 手动运行。权限为 `contents: read`、`pages: write`、`id-token: write`；通过 `concurrency: update-stats` 保证同一时间只有一个实例、`cancel-in-progress: false`，运行于 `ubuntu-latest`、Node 22，整体超时 40 分钟。
 
 执行顺序为：查询 API 判定是否为 Fork 并确定目标用户名，恢复两类缓存，运行统计脚本（自身 25 分钟超时），打包 `_site/`，上传并部署 Pages，清除卡片在 camo 的缓存，最后写入运行摘要。统计脚本在任一仓库未能完成时以非零码退出，工作流据此不再部署，站点保持上一次发布的内容，摘要也会相应显示为未发布。
 
@@ -82,7 +84,7 @@ _site/
     └── <repo>.json
 ```
 
-`lint.yml` 在 push 到 `main` 及 PR 时执行 `ruff check` 与 `ruff format --check`。
+`lint.yml` 在 push 到 `main` 及 PR 时执行 `node --check` 语法检查与 `node --test` 单元测试。
 
 ## 配置
 
@@ -110,12 +112,12 @@ _site/
 
 ## 本地运行
 
-需要 Python 3.11 及以上（依赖标准库 `tomllib`）与两个令牌：
+需要 Node 20 及以上（无第三方依赖）与两个令牌：
 
 ```bash
 export GH_TOKEN=...
 export EMAILS_TOKEN=...
-python scripts/generate_stats.py
+node scripts/generate_stats.js
 ```
 
 生成的 `contributions.svg` 与 `scripts/stats_cache/` 均由 `.gitignore` 排除，不会进入版本管理。

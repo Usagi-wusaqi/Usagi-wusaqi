@@ -2,7 +2,7 @@
 * text=auto eol=lf
 
 # 明确指定各种文件类型使用 LF
-*.py text eol=lf
+*.js text eol=lf
 *.md text eol=lf
 *.json text eol=lf
 *.yml text eol=lf
