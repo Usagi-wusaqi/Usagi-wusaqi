@@ -71,7 +71,7 @@ GitHub Pages ← README.md 中的固定图片链接
 
 执行顺序为：查询 API 判定是否为 Fork 并确定目标用户名，恢复两类缓存，运行统计脚本（自身 25 分钟超时），打包 `_site/`，上传并部署 Pages，清除卡片在 camo 的缓存，最后写入运行摘要。统计脚本在任一仓库未能完成时以非零码退出，工作流据此不再部署，站点保持上一次发布的内容，摘要也会相应显示为未发布。
 
-两类持久化数据分开处理：`temp_repos/` 是本地 blobless 克隆，走 `actions/cache`；`scripts/stats_cache/*.json` 是提交明细，发布到 Pages 的 `data/` 供直接访问。工作流从站点的 `data/manifest.json` 逐份读回明细，读取失败会重试三次；站点尚无清单时从空缓存开始全量统计。摘要包含触发方式、汇总指标、缓存恢复结果、camo 状态与站点地址，显示在 Actions 运行页顶部。
+两类持久化数据分开处理：`temp_repos/` 是本地 blobless 克隆，走 `actions/cache`；`scripts/stats_cache/*.json` 是提交明细，发布到 Pages 的 `data/` 供直接访问。工作流从站点的 `data/manifest.json` 逐份读回明细，读取失败会重试三次；站点尚无清单时从空缓存开始全量统计。摘要包含触发方式、汇总指标、缓存恢复结果、camo 状态、各阶段耗时与站点地址，显示在 Actions 运行页顶部。
 
 ```
 _site/

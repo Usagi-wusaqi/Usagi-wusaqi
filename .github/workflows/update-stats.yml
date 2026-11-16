@@ -49,6 +49,7 @@ jobs:
         id: determine-users
         run: |
           echo "🔍 正在确定统计目标..."
+          echo "T_START=$(date +%s)" >> $GITHUB_ENV
 
           # 通过查询 GitHub API 检查是否为 Fork 仓库
           REPO_INFO=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
@@ -88,6 +89,8 @@ jobs:
 
           echo "ORIGIN_USERNAME=$ORIGIN_USERNAME" >> $GITHUB_OUTPUT
           echo "UPSTREAM_USERNAME=$UPSTREAM_USERNAME" >> $GITHUB_OUTPUT
+          # 下一步是 cache/restore，记下边界时间即可算出它的用时
+          echo "T_CACHE=$(date +%s)" >> $GITHUB_ENV
           echo "✅ 目标用户已确定"
 
       # 恢复上次的仓库克隆，本次只需增量 fetch
@@ -102,7 +105,13 @@ jobs:
       # 统计缓存由 Pages 托管：跑之前从站点拉回，跑完连同卡片一起部署
       - name: 从 Pages 恢复统计缓存
         id: restore-cache
-        run: python3 scripts/pipeline.py restore
+        run: |
+          start=$(date +%s)
+          # 本步开始到上一步结束之间只隔着 cache/restore
+          echo "SEC_CLONE=$(( start - ${T_CACHE:-$start} ))" >> $GITHUB_ENV
+          python3 scripts/pipeline.py restore && rc=0 || rc=$?
+          echo "SEC_RESTORE=$(( $(date +%s) - start ))" >> $GITHUB_ENV
+          exit $rc
 
       # 生成统计数据
       - name: 生成统计数据
@@ -128,10 +137,14 @@ jobs:
           fi
 
           # 运行脚本，带超时和错误处理
-          timeout 25m python3 scripts/generate_stats.py || {
+          start=$(date +%s)
+          timeout 25m python3 scripts/generate_stats.py && rc=0 || rc=$?
+          # 失败也要记下用时，摘要才看得出卡在哪
+          echo "SEC_STATS=$(( $(date +%s) - start ))" >> $GITHUB_ENV
+          if [ "$rc" -ne 0 ]; then
             echo "❌ 统计生成失败或超时"
             exit 1
-          }
+          fi
 
           echo "✅ 统计数据生成成功"
 
@@ -146,7 +159,13 @@ jobs:
       # 卡片 + 统计缓存一起托管，站点上都能直接打开查看
       - name: 准备 Pages 产物
         id: prepare-site
-        run: python3 scripts/pipeline.py site
+        run: |
+          start=$(date +%s)
+          python3 scripts/pipeline.py site && rc=0 || rc=$?
+          echo "SEC_SITE=$(( $(date +%s) - start ))" >> $GITHUB_ENV
+          # 上传和部署是两个 uses 步骤，把边界时间交给下一步算
+          echo "T_DEPLOY=$(date +%s)" >> $GITHUB_ENV
+          exit $rc
 
       - name: 上传 Pages 产物
         uses: actions/upload-pages-artifact@v3
@@ -164,7 +183,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
-        run: python3 scripts/pipeline.py purge
+        run: |
+          start=$(date +%s)
+          if [ -n "$T_DEPLOY" ]; then
+            echo "SEC_DEPLOY=$(( start - T_DEPLOY ))" >> $GITHUB_ENV
+          fi
+          python3 scripts/pipeline.py purge && rc=0 || rc=$?
+          echo "SEC_PURGE=$(( $(date +%s) - start ))" >> $GITHUB_ENV
+          exit $rc
 
       # 运行摘要：写入 Step Summary，显示在 Actions 运行页顶部
       - name: 摘要
@@ -179,4 +205,8 @@ jobs:
           RESTORE_FAILED: ${{ steps.restore-cache.outputs.failed }}
           PURGE_RESULT: ${{ steps.purge.outputs.result }}
           PURGE_DETAIL: ${{ steps.purge.outputs.detail }}
-        run: python3 scripts/pipeline.py summary
+        run: |
+          if [ -n "$T_START" ]; then
+            export SEC_TOTAL=$(( $(date +%s) - T_START ))
+          fi
+          python3 scripts/pipeline.py summary

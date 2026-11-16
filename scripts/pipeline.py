@@ -40,6 +40,16 @@ SYNC_INTERVAL = 10
 
 CAMO_PATTERN = re.compile(r"https://camo\.githubusercontent\.com/[0-9a-f]+/[0-9a-f]+")
 
+# 工作流按阶段把耗时秒数写进 $GITHUB_ENV，摘要据此列出各段用时
+TIMING_PHASES = (
+    ("SEC_CLONE", "恢复仓库克隆缓存"),
+    ("SEC_RESTORE", "恢复统计缓存"),
+    ("SEC_STATS", "统计脚本"),
+    ("SEC_SITE", "打包站点"),
+    ("SEC_DEPLOY", "上传并部署 Pages"),
+    ("SEC_PURGE", "清除卡片缓存"),
+)
+
 INDEX_TEMPLATE = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -79,6 +89,17 @@ def emit(**fields: object) -> None:
     with open(path, "a", encoding="utf-8") as handle:
         for key, value in fields.items():
             handle.write(f"{key}={value}\n")
+
+
+def parse_seconds(name: str) -> int | None:
+    """读取工作流写入的阶段耗时，缺失或非数字时返回 None。"""
+    raw = (os.environ.get(name) or "").strip()
+    return int(raw) if raw.isdigit() else None
+
+
+def format_duration(seconds: int) -> str:
+    minutes, rest = divmod(max(seconds, 0), 60)
+    return f"{minutes} 分 {rest} 秒" if minutes else f"{rest} 秒"
 
 
 def site_base() -> str:
@@ -336,6 +357,19 @@ def cmd_summary(_args: argparse.Namespace) -> int:
         ]
     elif not deployed:
         lines += ["- 本次未部署，站点内容保持上次发布的版本。", ""]
+
+    rows = [
+        (label, format_duration(seconds))
+        for name, label in TIMING_PHASES
+        if (seconds := parse_seconds(name)) is not None
+    ]
+    total = parse_seconds("SEC_TOTAL")
+    if rows or total is not None:
+        lines += ["## 耗时", "", "| 阶段 | 耗时 |", "| --- | --- |"]
+        lines += [f"| {label} | {value} |" for label, value in rows]
+        if total is not None:
+            lines += [f"| **总计** | {format_duration(total)}（自确定目标用户起） |"]
+        lines += [""]
 
     text = "\n".join(lines)
     print(text)
