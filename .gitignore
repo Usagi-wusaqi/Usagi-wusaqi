@@ -67,3 +67,11 @@ Thumbs.db
 temp_repos/
 *.tmp
 *.temp
+
+# 统计产物仅由工作流生成并发布到 Pages，不再进 git
+contributions.svg
+scripts/stats_cache/
+_site/
+
+# 本地 lint 缓存
+.ruff_cache/

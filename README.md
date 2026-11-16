@@ -2,9 +2,9 @@
 ORIGIN_USERNAME = Usagi-wusaqi
 UPSTREAM_USERNAME = Usagi-wusaqi
 
-模板说明：
-- README.template.md 是模板文件，脚本会从中生成 README.md
-- 用户名占位符 Usagi-wusaqi / Usagi-wusaqi 由脚本自动替换
+说明：
+- 上面两个值供脚本在环境变量缺失时读取
+- 贡献卡片由 GitHub Pages 托管，本文件只保留固定外链
 - 作者邮箱在运行时从 GitHub API 获取，不写入配置文件
 -->
 
@@ -32,6 +32,7 @@ I'm a code enthusiast who loves turning ideas into reality through code. With a 
 <table width="100%">
   <tr>
     <td align="center" valign="top" width="50%">
+      <img src="https://usagi-wusaqi.github.io/Usagi-wusaqi/contributions.svg" alt="Code Contributions" width="100%"/><br>
       <img src="https://github-stats-extended.vercel.app/api?username=Usagi-wusaqi&show_icons=true&locale=en&include_all_commits=true&rank_icon=percentile&show=contributions,all_time_contribs,reviews,discussions_started,discussions_answered,prs_merged,prs_merged_percentage,prs_authored,prs_commented,prs_reviewed,issues_authored,issues_commented&count_private=true&hide_border=true" alt="GitHub stats" width="100%" />
     </td>
     <td align="center" valign="top" width="50%">
