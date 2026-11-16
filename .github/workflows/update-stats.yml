@@ -2,6 +2,9 @@ name: 更新贡献卡片
 
 on:
   workflow_dispatch:
+  schedule:
+    # 每天 23:59 北京时间 (UTC+8 → 15:59 UTC)
+    - cron: '59 15 * * *'
 
 # 统计产物发布到 GitHub Pages，不向 main 写入任何提交
 permissions:
