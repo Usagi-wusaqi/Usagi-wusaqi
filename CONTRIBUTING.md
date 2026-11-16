@@ -1,459 +1,133 @@
-# 指南
+# 主页与统计卡片
 
-本文件说明如何运行、调试和理解这套贡献统计与自动化工作流。
+`README.md` 由 GitHub 渲染为个人主页，仓库内其余文件实现一套自建的贡献统计系统：按账号汇总各仓库的提交，生成 SVG 卡片与逐仓库明细，每日经 GitHub Actions 发布到 GitHub Pages。主页只引用一条固定的卡片地址，仓库中不保存统计产物。
 
-## 📋 目录
+除自建卡片外，主页还通过外部服务引用访问计数徽章、装饰图像、随机名言、GitHub 统计卡、活动摘要卡、语言分布与连续提交天数。README 仅负责版式与链接，不保存图片，也不参与计算。
 
-1. [快速开始](#快速开始)
-2. [运行流程](#运行流程)
-3. [模板系统](#模板系统)
-4. [核心特性](#核心特性)
-5. [配置说明](#配置说明)
-6. [故障排除](#故障排除)
+## 特性
 
----
+- 支持定时与手动两种触发方式，每日更新一次。
+- 增量统计：各仓库历史只扫描一次，后续运行仅处理新增提交。
+- 采用 blobless 部分克隆（`--filter=blob:none`），避免下载文件内容对象。
+- 统计产物与中间数据统一托管在 Pages，主页链接保持不变。
+- 部署完成后清除图片代理的缓存，新访客即时取到最新卡片。
+- 站点根路径提供索引页，可直接浏览卡片与各仓库明细。
+- 提交归属按账号邮箱判定，含 `Co-authored-by` 共同作者。
+- 仅依赖 Python 标准库，Fork 后自动适配仓库归属。
 
-## 🚀 快速开始
+## 工作原理
 
-### GitHub Actions 运行
+```
+GitHub REST API / git log
+        ↓ 仓库列表、提交元数据、增删行数
+scripts/generate_stats.py
+        ↓ scripts/stats_cache/<repo>.json + contributions.svg
+scripts/pipeline.py site
+        ↓ _site/（卡片 + index.html + data/*.json + data/manifest.json）
+upload-pages-artifact → deploy-pages → pipeline.py purge
+        ↓
+GitHub Pages ← README.md 中的固定图片链接
+```
 
-1. **准备你自己的仓库版本** - 在个人的 README 仓库中
-2. **触发更新**（默认工作流会把仓库内置的 `secrets.GITHUB_TOKEN` 映射为 `GH_TOKEN`，无需额外配置）
+流程分四层：API 与本地 git 克隆提供原始数据；`generate_stats.py` 完成提交过滤、指标聚合与 SVG 渲染；`pipeline.py` 负责与站点之间的读写，即读回缓存、打包产物、清除代理缓存与写运行摘要；Pages 对外提供静态访问。卡片内容每日替换，主页无需改动。
 
-   > **私有仓库说明：** 当前仓库默认工作流没有内置自定义 PAT 覆盖逻辑。如需统计私有仓库，请先在 `Settings > Secrets and variables > Actions` 中创建 PAT secret（需要 `repo` 权限），再把 `.github/workflows/update-stats.yml` 中 `GH_TOKEN` 的来源改为你的自定义 secret。
+## 目录结构
 
-   **方式一：手动触发**
-   - 进入仓库的 `Actions` 标签页
-   - 选择 "更新 README 统计数据" 工作流
-   - 点击 "Run workflow" 按钮
-   - 在弹出的对话框中点击绿色的 "Run workflow" 按钮
-   - 等待几分钟，工作流完成后 README.md 会自动更新
+```
+.
+├── README.md                        # 个人主页，静态文件，人工维护
+├── config.toml                      # API、SVG 样式与运行参数
+├── scripts/
+│   ├── generate_stats.py            # 数据采集、缓存、聚合与 SVG 生成
+│   └── pipeline.py                  # 站点读写：读回缓存、打包产物、清缓存、写摘要
+├── .github/workflows/
+│   ├── update-stats.yml             # 每日统计与 Pages 部署
+│   └── lint.yml                     # Ruff 检查与格式校验
+├── .gitignore                       # 排除运行时产物与各类缓存
+├── .gitattributes                   # 统一 LF 行尾，图片按二进制处理
+└── CONTRIBUTING.md                  # 仓库说明
+```
 
-   **方式二：定时触发**
-   - 已配置每日北京时间 23:59 自动运行
-   - 可在 `.github/workflows/` 中的 YAML 文件里修改 `schedule` 触发器：
-   ```yaml
-   on:
-     workflow_dispatch:
-     schedule:
-       - cron: '59 15 * * *'  # 每日 UTC 15:59（北京时间 23:59）
-   ```
+`generate_stats.py` 按职责分为配置加载、API 客户端、仓库枚举与 Fork 判定、克隆与提交采集、缓存读写、SVG 生成、并发调度及主流程等模块。`pipeline.py` 提供 `restore`、`site`、`purge`、`summary` 四个子命令，工作流只负责调用，两者都在 Ruff 的检查范围内。
 
-### 本地运行
+## 统计口径
 
-> **前置要求：** Python 3.11+（用到标准库 `tomllib`）。脚本零第三方依赖，无需安装任何包，也无需编译。
+统计范围仅限公开仓库。仓库列表通过公开接口按账号获取，私有仓库不会出现在返回结果中，其中的提交也不计入卡片，因此卡片数值只反映公开提交，低于 GitHub 个人主页显示的贡献数属正常。
+
+| 卡片列 | 计算方式 |
+| --- | --- |
+| `Additions` | 归属提交的新增行数累计 |
+| `Deletions` | 归属提交的删除行数累计 |
+| `Net` | 前两项之差 |
+| `Images` | 状态为 `added` 且扩展名命中 `image_extensions` 的文件数 |
+
+提交归属以 GitHub 账号邮箱集合判定，只比较邮箱，提交者姓名不参与；commit trailer 中的共同作者邮箱同样计入。邮箱通过 `/user/emails` 在运行时获取，仅保存在内存中，不写入配置文件。提交列表与增删行数主要取自 `git log`，本地克隆缺失或 `git log` 无结果时改由 REST API 获取，提交详情亦可由 API 补齐。
+
+缓存按仓库分文件保存，以 commit URL 去重后增量追加，写入前按时间排序并重建序号。单仓库失败时沿用上次缓存；部分克隆不受支持时回退为全量克隆。
+
+## 自动化工作流
+
+`update-stats.yml` 在每日 23:59（北京时间，cron `59 15 * * *` UTC）触发，也支持 `workflow_dispatch` 手动运行。权限为 `contents: read`、`pages: write`、`id-token: write`；通过 `concurrency: update-stats` 保证同一时间只有一个实例、`cancel-in-progress: false`，运行于 `ubuntu-latest`、Python 3.11，整体超时 40 分钟。
+
+执行顺序为：查询 API 判定是否为 Fork 并确定目标用户名，恢复两类缓存，运行统计脚本（自身 25 分钟超时），打包 `_site/`，上传并部署 Pages，清除卡片在 camo 的缓存，最后写入运行摘要。统计脚本在任一仓库未能完成时以非零码退出，工作流据此不再部署，站点保持上一次发布的内容，摘要也会相应显示为未发布。
+
+两类持久化数据分开处理：`temp_repos/` 是本地 blobless 克隆，走 `actions/cache`；`scripts/stats_cache/*.json` 是提交明细，发布到 Pages 的 `data/` 供直接访问。工作流从站点的 `data/manifest.json` 逐份读回明细，读取失败会重试三次；站点尚无清单时从空缓存开始全量统计。摘要包含触发方式、汇总指标、缓存恢复结果、camo 状态与站点地址，显示在 Actions 运行页顶部。
+
+```
+_site/
+├── contributions.svg
+├── index.html
+└── data/
+    ├── manifest.json
+    └── <repo>.json
+```
+
+`lint.yml` 在 push 到 `main` 及 PR 时执行 `ruff check` 与 `ruff format --check`。
+
+## 配置
+
+`config.toml` 包含 `[api]`、`[svg]`、`[svg.layout]`、`[svg.font]`、`[svg.labels]`、`[behavior]` 六段，分别控制 API 分页与配额告警、卡片标题与配色、布局坐标、字体、列标签，以及图片扩展名、并发度等运行行为。卡片默认标题为 `Code Contributions`，尺寸 1200×200。脚本内置各段默认值，配置缺失或解析失败时自动回退。
+
+| 变量 | 用途 | 必需 |
+| --- | --- | --- |
+| `GH_TOKEN` | 调用 REST API 与克隆仓库 | 是 |
+| `EMAILS_TOKEN` | 读取账号邮箱，需 `user:email` 权限 | 是 |
+| `ORIGIN_USERNAME` | 统计目标账号 | 否，缺省时读 README 头部注释 |
+| `UPSTREAM_USERNAME` | Fork 场景下的上游账号 | 否，缺省时读 README 头部注释 |
+
+命令行支持 `--clear-cache`（清除本地缓存与仓库克隆副本）和 `-h` / `--help`。
+
+## 站点产物
+
+| 路径 | 内容 |
+| --- | --- |
+| `/` | 索引页，列出卡片与当次发布的所有明细 |
+| `/contributions.svg` | 四列指标卡片 |
+| `/data/manifest.json` | 当前明细文件清单，由工作流打包时生成 |
+| `/data/<repo>.json` | 逐仓库提交明细 |
+
+每份明细由 `_metadata` 与 `data` 两部分组成。提交记录含 `index`、`timestamp`、`additions`、`deletions`、`images`、`url` 六个字段；`_metadata` 记录该仓库的提交数、增删行数、图片数与最新提交时间，并携带 `repo_id`、`full_name`，用于仓库改名或转让后接续缓存。
+
+## 本地运行
+
+需要 Python 3.11 及以上（依赖标准库 `tomllib`）与两个令牌：
 
 ```bash
-export GH_TOKEN="your-github-token"
-python scripts/generate_stats.py               # 生成本地 SVG 卡片 + 更新 README
-
-# 可选参数
-python scripts/generate_stats.py --clear-cache # 清除统计缓存与本地克隆后直接退出（不会重新生成统计）
-python scripts/generate_stats.py --help        # 显示帮助信息
-```
-
-> **注意：** 脚本同时统计代码行数（additions/deletions）和图片数，并生成本地 `contributions.svg` 卡片。
-
----
-
-## 🔀 运行流程
-
-### 数据流架构
-
-```
-┌─────────────────────────────────────────────────────────┐
-│  process_repos()          （仓库级线程池并发）           │
-│  ┌───────────────────┐                                  │
-│  │ 逐仓库:           │──→  analyze_repo()               │
-│  │ clone（全量历史） │      ├─ git log #1: commit 元数据 │
-│  │                   │      │  （sha/日期/作者，Python  │
-│  │                   │      │   侧按邮箱过滤）          │
-│  │                   │      ├─ 缓存命中: 跳过           │
-│  │                   │      └─ git log #2: 批量取       │
-│  │                   │         未命中的增删行与文件状态 │
-│  └───────────────────┘           ↓                      │
-│                            save_cache()                  │
-│                            (按仓库 commit 列表 →        │
-│                             scripts/stats_cache/         │
-│                             <repo>.json)                 │
-└─────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────┐
-│  aggregate_stats_from_cache()                            │
-│  读取各仓库 JSON 的 _metadata → 汇总统计                 │
-│  返回: {total_commits, total_additions, total_deletions, │
-│        total_images, latest_commit_timestamp}            │
-└─────────────────────────────────────────────────────────┘
-                              ↓
-                        aggregate_stats_from_cache()
-                              ↓
-                    save_contributions_svg()
-                       → contributions.svg
-                              ↓
-                      update_readme()
-                ({{CONTRIBUTIONS_CARD_SRC}} →
-                    contributions.svg)
-```
-
-### 缓存文件格式
-
-每个仓库独立缓存到 `scripts/stats_cache/<repo>.json`。文件头保存汇总元数据，`data` 中保存该仓库的 commit 明细（每条 commit 一行，第二条起使用前置逗号，避免追加时改动旧尾行）：
-
-```json
-{
-  "_metadata": {"total_commits": 2, "total_additions": 62, "total_deletions": 23, "total_images": 1, "latest_commit_timestamp": "2024-01-16T10:30:00Z"},
-  "data": {"example-repo": [
-      {"timestamp": "2024-01-15T10:30:00Z", "index": 1, "additions": 50, "deletions": 20, "images": 1, "url": "https://github.com/owner/example-repo/commit/abc123"}
-      ,{"timestamp": "2024-01-16T10:30:00Z", "index": 2, "additions": 12, "deletions": 3, "images": 0, "url": "https://github.com/owner/example-repo/commit/def456"}
-    ]
-  }
-}
-```
-
-### config.toml 格式
-
-采集脚本的配置集中在仓库根目录的 `config.toml`，共三部分：
-
-| 键 / 段 | 作用 |
-| ------- | ---- |
-| `[api]` | GitHub API 基址、分页大小、最大页数与配额告警阈值 |
-| `[svg]` | 卡片标题、配色、布局与字体（含 `custom_title`、`layout`、`font`、`labels`） |
-| `[behavior]` | 进度打印间隔、分隔线宽度、并发仓库数 `concurrency`、图片扩展名 |
-
----
-
-## 🎯 模板系统
-
-### 工作原理
-
-使用智能模板系统解决"占位符一次性替换"问题：
-
-1. **模板文件** (`README.template.md`) - 包含占位符的源文件
-2. **脚本运行** - 从模板生成完整 README，替换所有占位符
-3. **生成结果** (`README.md`) - 包含真实数据的最终文件
-
-### 解决的核心问题
-
-#### 传统方式的问题
-- ❌ **一次性替换**：`{{ORIGIN_USERNAME}}` → `your-username`，下次运行找不到占位符
-- ❌ **维护困难**：每个链接都要手动修改用户名
-- ❌ **服务不兼容**：GitHub stats 看到占位符无法识别
-
-#### 模板系统的优势
-- ✅ **可重复运行**：每次从模板开始，永远有占位符可替换
-- ✅ **维护简单**：只需在模板中使用占位符，自动替换所有位置
-- ✅ **服务兼容**：生成真实链接，GitHub stats 正常工作
-
-### 支持的占位符
-
-| 占位符 | 说明 | 示例 |
-| ------ | ---- | ---- |
-| `{{ORIGIN_USERNAME}}` | 远端用户名 | `your-username` |
-| `{{UPSTREAM_USERNAME}}` | 上游用户名 | `upstream-username` |
-| `{{CONTRIBUTIONS_CARD_SRC}}` | 贡献卡片图片源 | `contributions.svg` |
-
-### 使用示例
-
-**模板文件内容：**
-```markdown
-# {{ORIGIN_USERNAME}} 的项目
-
-![Stats](https://github-readme-stats.vercel.app/api?username={{ORIGIN_USERNAME}})
-```
-
-**生成的结果：**
-```markdown
-# your-username 的项目
-
-![Stats](https://github-readme-stats.vercel.app/api?username=your-username)
-```
-
----
-
-## ⭐ 核心特性
-
-### 🚀 自动化与智能化
-- **GitHub Actions 集成** - 手动触发或每日北京时间 23:59 定时自动更新
-- **智能缓存系统** - 95%+ 缓存命中率，显著提升运行速度
-- **增量更新** - 只处理新增的 commits，避免重复分析
-- **保守缓存** - 默认追加/更新并按 commit URL 去重；需要彻底重建时使用 `--clear-cache`
-- **智能跳过** - 统计数据未变化时不更新 README，避免无意义的提交
-- **自动压缩提交** - 连续的统计工作流提交会自动压缩到上一条统计提交，避免刷屏
-
-### 📊 数据统计
-- **代码行数** - 统计每个 commit 的 additions 和 deletions（通过 `git log --numstat` 逐文件求和）
-- **图片资源** - 统计图片文件（.png, .jpg, .jpeg, .gif, .svg, .webp, .ico, .bmp）
-- **Git log 优先** - 优先使用本地 git log（完整历史），API 仅在失败时兜底
-- **分层数据流** - `scripts/stats_cache/<repo>.json` → 汇总统计 → SVG 卡片 / README
-- **SVG 卡片** - 四列布局：Additions / Deletions / Net / Images
-
-### 🍴 上游仓库兼容
-- **自动检测** - 智能识别 Fork / 上游关系，分析上游仓库而不是派生仓库本身
-- **用户名管理** - 通过占位符系统，在自己的项目中使用时也能正常替换为自己的用户名
-- **独立缓存** - 每个仓库有自己的 commit 缓存文件，互不干扰
-- **上游创建者保留** - 保留上游创建者信息，便于识别来源
-
-### 🔧 技术优势
-- **零依赖零编译** - 仅用 Python 标准库（tomllib / json / urllib / subprocess），无需安装任何包，改完即可直接运行
-- **子进程极少** - 每个仓库只需 2 次 git 调用（1 次取 commit 元数据、1 次批量取 diff 统计）
-- **容错性强** - git log 失败时自动降级使用 API 兜底
-- **格式保持** - 从模板生成 README，保持布局一致；回退模式用正则精确替换
-
----
-
-## 🔧 配置说明
-
-### 环境变量
-
-| 变量名 | 必需 | 默认值 | 说明 |
-| ------ | ---- | ------ | ---- |
-| `GH_TOKEN` | 本地运行 ✅ / Actions 自动提供 | GitHub Actions 中默认映射为 `secrets.GITHUB_TOKEN` | GitHub Token；如需统计私有仓库，需自行修改 workflow 以读取自定义 secret |
-| `EMAILS_TOKEN` | ✅ | 无 | 带 `user:email` 权限的 PAT，用于读取账号下的全部邮箱；缺失时脚本直接报错退出 |
-| `ORIGIN_USERNAME` | ❌ | 自动检测 | 远端用户名 |
-| `UPSTREAM_USERNAME` | ❌ | 自动检测 | 上游用户名 |
-
-### GitHub Actions 自动设置
-
-在 GitHub Actions 环境中，工作流会通过 GitHub API 自动检测仓库类型并设置变量：
-
-```yaml
-env:
-  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  EMAILS_TOKEN: ${{ secrets.EMAILS_TOKEN }}
-  ORIGIN_USERNAME: ${{ steps.determine-users.outputs.ORIGIN_USERNAME }}
-  UPSTREAM_USERNAME: ${{ steps.determine-users.outputs.UPSTREAM_USERNAME }}
-```
-
-`EMAILS_TOKEN` 需要在仓库的 `Settings > Secrets and variables > Actions` 中自行添加，创建时勾选 `user:email` 即可。缺失或失效时脚本会中止运行，不会产出不完整的结果。
-
-> **私有仓库说明：** 如果你希望统计私有仓库，可以把这里的 `secrets.GITHUB_TOKEN` 改成你自己配置的 secret（例如 `secrets.GH_TOKEN`）；当前仓库默认工作流不会自动覆盖。
-
-### 变量用途说明
-
-**ORIGIN_USERNAME（远端用户名）：**
-- Fork 仓库时：Fork 仓库（当前 Fork 的所有者）
-- 非 Fork 仓库时：和 UPSTREAM_USERNAME 一样（当前仓库所有者）
-- 用于 GitHub API 调用（获取仓库列表、commit 数据等）
-- 用于 GitHub Stats API（统计图表、语言分布等）
-
-**UPSTREAM_USERNAME（上游用户名）：**
-- 始终是上游用户名
-- Fork 仓库时：指向上游用户名
-- 非 Fork 仓库时：指向远端用户名
-- 用于上游作者链接
-
-**变量关系总结：**
-
-| 仓库类型 | ORIGIN_USERNAME | UPSTREAM_USERNAME |
-|---------|---------------|------------------|
-| Fork 仓库 | 远端用户名（当前 Fork 的所有者） | 上游用户名 |
-| 非 Fork 仓库 | 远端用户名 | 远端用户名 |
-
-脚本会按以下优先级初始化变量：
-
-**ORIGIN_USERNAME 优先级：**
-1. 环境变量 `ORIGIN_USERNAME`
-2. 从 README.md 读取 `ORIGIN_USERNAME = xxx`
-3. 空字符串（需要手动设置）
-
-**UPSTREAM_USERNAME 优先级：**
-1. 环境变量 `UPSTREAM_USERNAME`
-2. 从 README.md 读取 `UPSTREAM_USERNAME = xxx`
-3. 空字符串（需要手动设置）
-
-**注意：** 在 GitHub Actions 中，这两个变量会根据仓库类型自动设置。
-
-### 上游仓库行为详解
-
-当当前仓库存在上游关系并运行工作流时：
-
-- ✅ **ORIGIN_USERNAME = 远端用户名** - 统计远端仓库的贡献
-- ✅ **UPSTREAM_USERNAME = 上游用户名** - 作为上游作者显示值
-- ✅ **动态替换占位符** - 运行时将占位符替换为实际用户名
-- ✅ **独立缓存文件** - 每个仓库有自己的 `<repo>.json`，互不干扰
-- ✅ **可重复运行** - 不会出现占位符消失问题
-
-### 模板系统工作流程
-
-1. **检测模板** - 脚本首先检查是否存在 `README.template.md`
-2. **从模板生成** - 如果存在模板，从模板开始生成完整的 README
-3. **替换所有占位符** - 将所有占位符替换为实际值
-4. **生成最终 README** - 写入 `README.md`，包含真实数据
-
-### 性能表现
-
-| 场景 | 说明 |
-| ---- | ---- |
-| 首次运行 | 取决于仓库数量与 commit 历史；每个仓库固定 2 次 git 调用 |
-| 日常更新 | 95%+ 缓存命中率，只需拉取增量 commits；复用的克隆里已包含上次取过的 blob |
-| 清除缓存后 | 与首次运行相近，靠批量 `git log` 一次性取完 |
-| API 限流时 | 无明显影响，主要使用本地 git log，API 仅兜底 |
-
----
-
-## 🔬 技术原理
-
-### 工作流程
-
-```text
-1. 初始化 → 2. 获取仓库列表 → 3. 处理每个仓库 → 4. 汇总统计 → 5. 输出结果 → 6. 清理失效项
-   ↓              ↓                ↓               ↓              ↓            ↓
-环境变量       GitHub API     clone+分析+缓存   aggregate_     config.toml   陈旧缓存
-                                                 stats_from_    SVG卡片       多余克隆
-                                                 cache()       README.md
-```
-
-### 智能跳过
-
-- 更新前会先从 `config.toml` 读取当前统计数字（additions/deletions/images）
-- 如果三项统计数据均未变化，跳过全部更新（config.toml + SVG + README）
-- 避免仅因时间戳变化而产生无意义的提交
-
-### 数据源策略
-
-- **本地 git log（优先）** - 完整历史数据，准确可靠
-- **GitHub API（兜底）** - 仅在 git log 失败时使用（有分页限制，最多 1000 条）
-- **无合并逻辑** - 两个数据源只取其一，git log 优先，API 仅作回退方案
-
-### SVG 贡献卡片
-
-- **生成方式** - Python 脚本 `generate_contributions_svg()` 直接生成 `contributions.svg`
-- **数据来源** - `aggregate_stats_from_cache()` 汇总的 `StatsData`
-- **展示** - 水平四列布局（Additions / Deletions / Net / Images），1200×200
-- **自定义** - 通过 `config.toml` 的 `[svg]` 段配置 `custom_title`、`title_color`、`text_color`、`bg_color` 等
-- **触发** - GitHub Actions 每日自动生成并提交到仓库
-
-### 缓存机制
-
-- **增量处理** - 只分析新增的 commits，避免重复分析
-- **仓库级缓存** - 每个仓库独立维护 commit 缓存；当前仓库列表里已经不存在的缓存文件会自动删除
-- **按 ID 识别** - 缓存里记录仓库的数字 `id`，仓库改名后自动接续原缓存，不重算；转让出去则随仓库列表移除
-- **永久保存** - 保留比当前最老 commit 更久远的历史数据
-- **缓存格式** - 每条记录保存 `timestamp`、`index`、`additions`、`deletions`、`images` 和 commit `url`
-- **多文件缓存** - `aggregate_stats_from_cache()` 读取各仓库缓存的 `_metadata` 并汇总统计
-
-### 本地克隆复用
-
-`temp_repos/` 用于存放每个仓库的 blobless 克隆，运行结束后保留：
-
-- **增量拉取** - 先比对远端分支的 commit SHA，未变化时一次网络往返即可，不触发对象协商
-- **复用已取的文件** - 计算增删行数时按需拉取的 blob 会留在本地，下次运行无需重新下载
-- **Actions 缓存** - 工作流用 `actions/cache` 保存该目录，缓存命中后耗时与仓库历史规模无关
-- **失效重建** - 更新失败或目录损坏时自动删除并重新克隆
-
-### 作者邮箱获取
-
-邮箱有两个来源，优先取账号接口：
-
-- **唯一来源** - 通过 `EMAILS_TOKEN`（`user:email` 权限）读取账号下的全部邮箱，与提交的时间、数量、所在仓库无关
-- **拿不到就停** - 未配置或令牌失效时直接报错退出，不退化成部分采样
-- **只按邮箱匹配** - 名字不参与判断，改用户名不影响归属
-- **不写入配置** - 邮箱只保存在内存中，`config.toml` 与仓库里都没有邮箱列表
-- **共同作者** - `Co-authored-by` 里的邮箱同样参与匹配
-
-### Fork 处理逻辑
-
-1. **检测 Fork** - 通过 `fork` 字段和 `source`/`parent` 信息
-2. **获取上游** - 提取上游仓库的 owner 和 name
-3. **切换目标** - 分析上游仓库而不是 Fork 本身
-4. **保持归属** - 统计数据仍归属于当前用户
-
-### 自动提交作者逻辑
-
-工作流生成的统计提交以仓库所有者身份提交，不使用 Actions 机器人身份：
-
-- **作者** - `{远端用户名} <{用户ID}+{远端用户名}@users.noreply.github.com>`，即该账号的 noreply 邮箱
-- **提交信息** - 固定为 `📊 更新统计（自动）`，不添加触发者或其他共同作者
-
-统计只按邮箱判定归属，所以这类自动提交同样会算进仓库所有者的提交数与行数。
-
-当最新一条提交同时满足「标题为 `📊 更新统计（自动）`」和「作者与本次一致」时，新的统计结果会直接压缩进上一条统计提交，不再新增一条。
-
----
-
-## 🐛 故障排除
-
-### 常见问题速查
-
-**Q: 统计没有更新？**
-- 检查 GitHub Actions 是否成功运行
-- 本地运行时确认 `GH_TOKEN` 设置正确；Actions 中确认 workflow 的 token 来源配置正确
-- 查看 Actions 日志中的错误信息
-
-**Q: 统计数据不准确？**
-- 首次运行需要几分钟分析历史数据
-- 如果当前仓库存在上游关系，会自动分析上游仓库
-- 可以手动触发工作流重新统计
-
-**Q: 脚本运行失败？**
-- 检查 token 权限是否足够（如使用 PAT，需要 `repo` 权限）
-- 确认网络连接正常
-- 查看详细错误日志
-
-### 详细问题解决
-
-#### 脚本运行很慢
-
-**可能原因：**
-- 首次运行需要分析所有历史 commits
-- 缓存文件被删除或损坏
-- 网络连接慢，API 调用超时
-
-**解决方法：**
-```bash
-# 检查缓存文件状态
-ls -la scripts/stats_cache/
-
-# 查看缓存统计信息（会显示缓存命中率）
+export GH_TOKEN=...
+export EMAILS_TOKEN=...
 python scripts/generate_stats.py
-
-# 首次运行耐心等待，后续会很快（95%+ 缓存命中率）
 ```
 
-#### GitHub API 调用失败
+生成的 `contributions.svg` 与 `scripts/stats_cache/` 均由 `.gitignore` 排除，不会进入版本管理。
 
-**可能原因：**
-- `GH_TOKEN` 无效、过期或权限不足
-- 网络连接问题或防火墙阻拦
-- GitHub API 限流（每小时 5000 次调用）
+## 复用
 
-**解决方法：**
-```bash
-# 检查 TOKEN 有效性
-curl -H "Authorization: token $GH_TOKEN" https://api.github.com/user
+1. Fork 本仓库，在 Settings → Pages 中将发布来源设为 GitHub Actions。
+2. 配置 `EMAILS_TOKEN`；`GH_TOKEN` 由 Actions 自动注入。
+3. 将 README 中的卡片链接替换为自己的 Pages 地址。站点地址由脚本按仓库归属生成，无需改动代码。
 
-# 检查 API 限流状态
-curl -H "Authorization: token $GH_TOKEN" https://api.github.com/rate_limit
+## 注意事项
 
-# 脚本主要使用 git log，API 仅为兜底，影响有限
-```
-
-### 调试方法
-
-```bash
-# 查看详细输出
-python scripts/generate_stats.py
-
-# 清除统计缓存与本地克隆（仅清除，不会重新运行统计）
-python scripts/generate_stats.py --clear-cache
-
-# 清除缓存后重新运行（需要两条命令）
-python scripts/generate_stats.py --clear-cache && python scripts/generate_stats.py
-
-# 显示帮助信息
-python scripts/generate_stats.py --help
-```
-
-### 支持的图片格式
-
-**支持的格式：**
-- 常见格式：`.png`, `.jpg`, `.jpeg`, `.gif`
-- 矢量格式：`.svg`
-- 其他格式：`.bmp`, `.webp`, `.ico`
-
-**统计规则：**
-- 只统计**新增**的图片文件（status = 'added'）
-- 不统计修改或删除的图片
-- 通过文件扩展名判断（不区分大小写）
-
----
+- Pages 首次部署成功之前，主页的卡片链接尚无对应文件。
+- Pages 固定返回 `Cache-Control: max-age=600`，且不支持自定义响应头，camo 会按该值缓存。工作流部署完成后先确认站点已是本次产物，再向 camo 发送 `PURGE` 清除这张卡片的缓存，新访客即可取到最新版本；校验未通过或清除失败时，仍按十分钟自然过期。
+- 已在此前十分钟内打开过页面的浏览器可能继续使用本地缓存，`PURGE` 只影响 camo 一侧。站点上的明细文件不经 camo，访问即为最近一次发布的结果。
