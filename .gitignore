@@ -33,4 +33,5 @@ temp_repos/
 # 统计产物仅由工作流生成并发布到 Pages，不再进 git
 contributions.svg
 scripts/stats_cache/
+scripts/previous_summary.json
 _site/

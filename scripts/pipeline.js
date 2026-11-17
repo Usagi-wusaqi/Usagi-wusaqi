@@ -24,6 +24,9 @@ const CACHE_DIR = path.join(SCRIPT_DIR, "stats_cache");
 const SITE_DIR = path.join(PROJECT_ROOT, "_site");
 const CARD = path.join(PROJECT_ROOT, "contributions.svg");
 const MANIFEST = "manifest.json";
+// 每次运行的最终汇总随明细一起发布，下次直接读回做对比
+const LATEST = "latest.json";
+const PREVIOUS_SUMMARY = path.join(SCRIPT_DIR, "previous_summary.json");
 
 const USER_AGENT = "update-stats";
 const FETCH_TIMEOUT = 20_000;
@@ -190,6 +193,8 @@ async function cmdRestore() {
   const base = `${siteBase()}/data`;
   const stamp = process.env.GITHUB_RUN_ID ?? "0";
   fs.mkdirSync(CACHE_DIR, { recursive: true });
+  // 每次运行都从站点重新取基线，避免本地旧文件混进对比
+  fs.rmSync(PREVIOUS_SUMMARY, { force: true });
 
   const cached = (name) =>
     fetchBytes(`${base}/${name}?t=${stamp}`, {
@@ -233,6 +238,15 @@ async function cmdRestore() {
     }
     fs.writeFileSync(path.join(CACHE_DIR, name), raw);
     restored += 1;
+  }
+
+  // 同时取回上次运行的最终汇总，摘要直接对比两个数字对象
+  try {
+    const raw = await cached(LATEST);
+    JSON.parse(raw.toString("utf8"));
+    fs.writeFileSync(PREVIOUS_SUMMARY, raw);
+  } catch {
+    console.log("ℹ️  站点尚无上次汇总数据，本次摘要不做数据对比");
   }
 
   console.log(`✅ 从 Pages 恢复 ${restored} 份统计缓存（失败 ${failed}）`);
@@ -291,11 +305,18 @@ function cmdSite() {
   fs.writeFileSync(path.join(dataDir, MANIFEST), jsonPrettyArray(names), {
     encoding: "utf8",
   });
+  // 最终汇总随产物一起发布，下次运行直接拉回对比
+  const summary = buildSummary(CACHE_DIR);
+  fs.writeFileSync(path.join(dataDir, LATEST), `${JSON.stringify(summary, null, 2)}\n`, {
+    encoding: "utf8",
+  });
   fs.writeFileSync(path.join(SITE_DIR, "index.html"), renderIndex(names), {
     encoding: "utf8",
   });
 
-  console.log(`📦 托管 ${names.length} 份统计缓存 + 1 张卡片 + 1 个索引页`);
+  console.log(
+    `📦 托管 ${names.length} 份统计缓存 + 1 张卡片 + 1 个索引页 + 1 份汇总`,
+  );
   emit({ repo_count: names.length });
   return 0;
 }
@@ -368,35 +389,164 @@ async function cmdPurge() {
 // summary：写入 Actions 运行摘要
 // ---------------------------------------------------------------------------
 
-function cmdSummary() {
-  const files = fs.existsSync(CACHE_DIR)
+/** 从缓存明细算出本次最终汇总；结果随产物发布，下次直接对比，不再读明细。 */
+function buildSummary(dir) {
+  const files = fs.existsSync(dir)
     ? fs
-        .readdirSync(CACHE_DIR)
+        .readdirSync(dir)
         .filter((name) => name.endsWith(".json"))
         .sort()
     : [];
-  let commits = 0;
-  let additions = 0;
-  let deletions = 0;
-  let images = 0;
-  let latest = "";
+  const summary = {
+    repo_count: files.length,
+    total_commits: 0,
+    total_additions: 0,
+    total_deletions: 0,
+    total_images: 0,
+    latest_commit_timestamp: "",
+    repos: {},
+  };
   for (const name of files) {
     let meta;
     try {
-      meta = JSON.parse(fs.readFileSync(path.join(CACHE_DIR, name), "utf8"));
+      meta = JSON.parse(fs.readFileSync(path.join(dir, name), "utf8"));
     } catch {
       continue;
     }
     const info = meta?._metadata ?? {};
-    commits += intOf(info.total_commits);
-    additions += intOf(info.total_additions);
-    deletions += intOf(info.total_deletions);
-    images += intOf(info.total_images);
-    const stamp = info.latest_commit_timestamp ?? "";
-    if (stamp > latest) {
-      latest = stamp;
+    const item = {
+      commits: intOf(info.total_commits),
+      additions: intOf(info.total_additions),
+      deletions: intOf(info.total_deletions),
+      images: intOf(info.total_images),
+      latest: info.latest_commit_timestamp ?? "",
+    };
+    summary.total_commits += item.commits;
+    summary.total_additions += item.additions;
+    summary.total_deletions += item.deletions;
+    summary.total_images += item.images;
+    if (item.latest > summary.latest_commit_timestamp) {
+      summary.latest_commit_timestamp = item.latest;
+    }
+    summary.repos[name] = item;
+  }
+  return summary;
+}
+
+/** 读一份已算好的汇总；不存在或损坏时返回 null。 */
+function readSummary(file) {
+  try {
+    const data = JSON.parse(fs.readFileSync(file, "utf8"));
+    return data && typeof data.repos === "object" ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+function formatDelta(value) {
+  return `${value > 0 ? "+" : value < 0 ? "-" : ""}${formatNumber(Math.abs(value))}`;
+}
+
+/** 对比两次运行的最终汇总，只读数字对象，不碰明细。 */
+function describeChanges(previous, current, failedRestore = 0) {
+  if (!previous || !Object.keys(previous.repos).length) {
+    return "首次运行或上次汇总不可用，暂无对比数据";
+  }
+
+  const commits = current.total_commits - previous.total_commits;
+  const additions = current.total_additions - previous.total_additions;
+  const deletions = current.total_deletions - previous.total_deletions;
+  const images = current.total_images - previous.total_images;
+  const added = Object.keys(current.repos).filter((name) => !previous.repos[name]);
+  const removed = Object.keys(previous.repos).filter((name) => !current.repos[name]);
+
+  const repoChanges = [];
+  for (const name of Object.keys(current.repos)) {
+    const before = previous.repos[name];
+    const after = current.repos[name];
+    if (!before) {
+      continue;
+    }
+    const parts = [];
+    if (after.commits !== before.commits) {
+      parts.push(`提交 ${formatDelta(after.commits - before.commits)}`);
+    }
+    if (
+      after.additions !== before.additions ||
+      after.deletions !== before.deletions
+    ) {
+      parts.push(
+        `增删行 ${formatDelta(after.additions - before.additions)} / ${formatDelta(after.deletions - before.deletions)}`,
+      );
+    }
+    if (after.images !== before.images) {
+      parts.push(`图片 ${formatDelta(after.images - before.images)}`);
+    }
+    if (after.latest !== before.latest) {
+      parts.push("最新提交时间更新");
+    }
+    if (parts.length) {
+      repoChanges.push(`${name.replace(/\.json$/, "")}（${parts.join("，")}）`);
     }
   }
+
+  const latestChanged =
+    previous.latest_commit_timestamp !== current.latest_commit_timestamp;
+  const changed =
+    commits !== 0 ||
+    additions !== 0 ||
+    deletions !== 0 ||
+    images !== 0 ||
+    latestChanged ||
+    added.length ||
+    removed.length ||
+    repoChanges.length;
+
+  const caveat =
+    failedRestore > 0 ? `（${failedRestore} 份缓存恢复失败，对比可能不完整）` : "";
+  if (!changed) {
+    return `较上一次运行，各项数据均无变化${caveat}`;
+  }
+
+  const parts = [];
+  if (commits !== 0) {
+    parts.push(`提交 ${formatDelta(commits)}`);
+  }
+  if (additions !== 0 || deletions !== 0) {
+    parts.push(`增删行 ${formatDelta(additions)} / ${formatDelta(deletions)}`);
+  }
+  if (images !== 0) {
+    parts.push(`图片 ${formatDelta(images)}`);
+  }
+  if (latestChanged) {
+    parts.push(`最新提交更新至 ${current.latest_commit_timestamp || "—"}`);
+  }
+  const lines = [`较上一次运行：${parts.join("，")}${caveat}`];
+
+  const repoParts = [
+    ...added.map((name) => `新增 ${name.replace(/\.json$/, "")}`),
+    ...removed.map((name) => `移除 ${name.replace(/\.json$/, "")}`),
+    ...repoChanges,
+  ];
+  if (repoParts.length) {
+    lines.push(`仓库变化：${repoParts.join("，")}`);
+  }
+  return lines.join("\n");
+}
+
+function cmdSummary() {
+  // 两次运行的最终汇总都是算好的数字，直接对比；本地缺产物时兜底现算本次
+  const current =
+    readSummary(path.join(SITE_DIR, "data", LATEST)) ?? buildSummary(CACHE_DIR);
+  const previous = readSummary(PREVIOUS_SUMMARY);
+  const {
+    repo_count,
+    total_commits: commits,
+    total_additions: additions,
+    total_deletions: deletions,
+    total_images: images,
+    latest_commit_timestamp: latest,
+  } = current;
 
   const env = (name, fallback = "—") => {
     const value = (process.env[name] ?? "").trim();
@@ -432,7 +582,7 @@ function cmdSummary() {
     `| 触发方式 | ${trigger} |`,
     `| 统计账号 | ${env("ORIGIN")} |`,
     `| 上游账号 | ${env("UPSTREAM")} |`,
-    `| 缓存仓库数 | ${files.length} |`,
+    `| 缓存仓库数 | ${repo_count} |`,
     `| 提交数 | ${formatNumber(commits)} |`,
     `| 新增 / 删除 | +${formatNumber(additions)} / -${formatNumber(deletions)}（净 ${net >= 0 ? "+" : ""}${formatNumber(net)}） |`,
     `| 图片 | ${formatNumber(images)} |`,
@@ -441,6 +591,12 @@ function cmdSummary() {
     `| camo 缓存 | ${purge} |`,
     "",
   ];
+  lines.push(
+    "## 数据变化",
+    "",
+    describeChanges(previous, current, intOf(env("RESTORE_FAILED", "0"))),
+    "",
+  );
   if (page && deployed) {
     lines.push(
       `- 卡片：${page}/contributions.svg`,
@@ -506,4 +662,13 @@ if (invokedDirectly) {
   process.exitCode = await main();
 }
 
-export { cmdSummary, formatDuration, jsonPrettyArray, renderIndex };
+export {
+  buildSummary,
+  cmdSummary,
+  describeChanges,
+  formatDelta,
+  formatDuration,
+  jsonPrettyArray,
+  readSummary,
+  renderIndex,
+};
