@@ -1,4 +1,4 @@
-# generate_stats.py 配置
+# generate_stats.js 配置
 # 作者邮箱在运行时通过 GitHub API 获取，仅保存在内存中，不写入本文件
 
 # ---- GitHub API ----

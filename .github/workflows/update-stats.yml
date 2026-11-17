@@ -11,6 +11,8 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  # 固定 key 的克隆缓存不可覆盖，保存前要先删旧条目
+  actions: write
 
 # 同一时间只保留一个实例：手动触发撞上定时任务时排队执行，
 # 避免两个运行同时部署或互相覆盖缓存
@@ -29,11 +31,12 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url || format('https://{0}.github.io/{1}', github.repository_owner, github.event.repository.name) }}
 
     steps:
-      # 检出代码仓库
+      # 检出代码仓库：统计脚本的 git 操作都作用于 temp_repos 下被统计的仓库，
+      # 本仓库只读 README 的配置默认值，不需要完整历史
       - name: 检出代码仓库
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0  # 获取完整历史以便更好的 git log 分析
+          fetch-depth: 1
 
       # 设置 Node
       - name: 设置 Node
@@ -45,63 +48,28 @@ jobs:
       - name: 配置 Pages
         uses: actions/configure-pages@v5
 
-      # 确定目标用户
+      # 确定目标用户：上游仓库由统计脚本从各仓库的 source/parent 字段自行解析，
+      # 这里只需给出账号名，不必再查一次仓库元数据
       - name: 确定目标用户
         id: determine-users
         run: |
           echo "🔍 正在确定统计目标..."
           echo "T_START=$(date +%s)" >> $GITHUB_ENV
 
-          # 通过查询 GitHub API 检查是否为 Fork 仓库
-          REPO_INFO=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}")
-
-          IS_FORK=$(echo "$REPO_INFO" | jq -r '.fork // false')
-          REPO_OWNER_ID=$(echo "$REPO_INFO" | jq -r '.owner.id // empty')
-
-          if [ "$IS_FORK" = "true" ]; then
-            # 这是 Fork 仓库
-            ORIGIN_USERNAME="${{ github.repository_owner }}"
-            UPSTREAM_USERNAME=$(echo "$REPO_INFO" | jq -r '.parent.owner.login // .source.owner.login // empty')
-
-            if [ -n "$UPSTREAM_USERNAME" ] && [ "$UPSTREAM_USERNAME" != "null" ]; then
-              echo "🍴 检测到 Fork 仓库"
-              echo "👤 远端用户名: $ORIGIN_USERNAME"
-              echo "👑 上游用户名: $UPSTREAM_USERNAME"
-            else
-              UPSTREAM_USERNAME="$ORIGIN_USERNAME"
-              echo "🍴 Fork 仓库但无法获取上游信息"
-              echo "👤 远端用户名: $ORIGIN_USERNAME"
-              echo "👑 上游用户名: $UPSTREAM_USERNAME"
-            fi
-          else
-            # 这是原始仓库
-            ORIGIN_USERNAME="${{ github.repository_owner }}"
-            UPSTREAM_USERNAME="${{ github.repository_owner }}"
-            echo "📦 检测到原始仓库"
-            echo "👤 远端用户名: $ORIGIN_USERNAME"
-            echo "👑 上游用户名: $UPSTREAM_USERNAME"
-          fi
-
-          if [ -z "$REPO_OWNER_ID" ] || [ "$REPO_OWNER_ID" = "null" ]; then
-            echo "❌ 错误: 无法获取远端用户 ID"
-            exit 1
-          fi
-
+          ORIGIN_USERNAME="${{ github.repository_owner }}"
           echo "ORIGIN_USERNAME=$ORIGIN_USERNAME" >> $GITHUB_OUTPUT
-          echo "UPSTREAM_USERNAME=$UPSTREAM_USERNAME" >> $GITHUB_OUTPUT
+          echo "UPSTREAM_USERNAME=$ORIGIN_USERNAME" >> $GITHUB_OUTPUT
           # 下一步是 cache/restore，记下边界时间即可算出它的用时
           echo "T_CACHE=$(date +%s)" >> $GITHUB_ENV
-          echo "✅ 目标用户已确定"
+          echo "✅ 目标用户: $ORIGIN_USERNAME"
 
       # 恢复上次的仓库克隆，本次只需增量 fetch
       - name: 恢复仓库克隆缓存
         uses: actions/cache/restore@v4
         with:
           path: temp_repos
-          key: stats-repos-${{ github.run_id }}
-          restore-keys: |
-            stats-repos-
+          # 固定 key：复用同一份克隆，不按 run_id 逐次累积缓存条目
+          key: stats-repos
 
       # 统计缓存由 Pages 托管：跑之前从站点拉回，跑完连同卡片一起部署
       - name: 从 Pages 恢复统计缓存
@@ -149,13 +117,21 @@ jobs:
 
           echo "✅ 统计数据生成成功"
 
-      # 保存本次克隆，供下次增量使用（仓库克隆不适合放 Pages，仍走 Actions 缓存）
+      # 保存本次克隆，供下次增量使用（仓库克隆不适合放 Pages，仍走 Actions 缓存）。
+      # 固定 key 无法覆盖写入，先删旧条目再存，避免每次运行都累积一份
+      - name: 删除旧的克隆缓存
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh cache delete stats-repos --repo "${{ github.repository }}" > /dev/null 2>&1 || true
+
       - name: 保存仓库克隆缓存
         if: always()
         uses: actions/cache/save@v4
         with:
           path: temp_repos
-          key: stats-repos-${{ github.run_id }}
+          key: stats-repos
 
       # 卡片 + 统计缓存一起托管，站点上都能直接打开查看
       - name: 准备 Pages 产物
@@ -168,7 +144,7 @@ jobs:
           echo "T_DEPLOY=$(date +%s)" >> $GITHUB_ENV
           exit $rc
 
-      # 汇总没变时站点内容完全相同，跳过部署与清缓存，省下一分钟部署和最长五分钟轮询
+      # 卡片字节没变时站点内容完全相同，跳过部署与清缓存，省下一分钟部署和最长五分钟轮询
       - name: 上传 Pages 产物
         if: steps.prepare-site.outputs.unchanged != 'true'
         uses: actions/upload-pages-artifact@v3
