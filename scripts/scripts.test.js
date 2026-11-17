@@ -20,6 +20,7 @@ import {
   jsonPrettyArray,
   readSummary,
   renderIndex,
+  summariesEqual,
 } from "./pipeline.js";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -325,4 +326,69 @@ test("readSummary 读回发布用的汇总 JSON，损坏时返回 null", () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+function summaryFixture() {
+  return {
+    repo_count: 2,
+    total_commits: 3,
+    total_additions: 40,
+    total_deletions: 5,
+    total_images: 1,
+    latest_commit_timestamp: "2026-11-16T10:00:00+08:00",
+    repos: {
+      "A.json": {
+        commits: 2,
+        additions: 30,
+        deletions: 4,
+        images: 1,
+        latest: "2026-11-16T10:00:00+08:00",
+      },
+      "B.json": {
+        commits: 1,
+        additions: 10,
+        deletions: 1,
+        images: 0,
+        latest: "2026-11-15T10:00:00+08:00",
+      },
+    },
+  };
+}
+
+const clone = (value) => JSON.parse(JSON.stringify(value));
+
+test("汇总比对：完全一致才判为无需部署", () => {
+  const base = summaryFixture();
+  assert.equal(summariesEqual(clone(base), base), true);
+  assert.equal(summariesEqual(null, base), false);
+  assert.equal(summariesEqual(base, null), false);
+
+  // 提交数变化（卡片只画增删行，不改这些字段就会被漏掉）
+  const moreCommits = clone(base);
+  moreCommits.total_commits = 4;
+  moreCommits.repos["A.json"].commits = 3;
+  assert.equal(summariesEqual(moreCommits, base), false);
+
+  // 仓库间增删行互换，总数不变
+  const swapped = clone(base);
+  swapped.repos["A.json"].additions = 25;
+  swapped.repos["B.json"].additions = 15;
+  assert.equal(summariesEqual(swapped, base), false);
+
+  // 仓库增删，总数不变
+  const replaced = clone(base);
+  delete replaced.repos["B.json"];
+  replaced.repos["C.json"] = clone(base.repos["B.json"]);
+  assert.equal(summariesEqual(replaced, base), false);
+
+  // 最新提交时间变化
+  const newer = clone(base);
+  newer.latest_commit_timestamp = "2026-11-17T10:00:00+08:00";
+  assert.equal(summariesEqual(newer, base), false);
+
+  // 仓库数量变化
+  const fewer = clone(base);
+  delete fewer.repos["B.json"];
+  fewer.repo_count = 1;
+  assert.equal(summariesEqual(fewer, base), false);
 });

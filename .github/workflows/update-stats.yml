@@ -25,7 +25,8 @@ jobs:
     timeout-minutes: 40
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      # 数据无变化会跳过部署，此时 deployment 输出为空，用仓库名拼出地址
+      url: ${{ steps.deployment.outputs.page_url || format('https://{0}.github.io/{1}', github.repository_owner, github.event.repository.name) }}
 
     steps:
       # 检出代码仓库
@@ -167,19 +168,23 @@ jobs:
           echo "T_DEPLOY=$(date +%s)" >> $GITHUB_ENV
           exit $rc
 
+      # 汇总没变时站点内容完全相同，跳过部署与清缓存，省下一分钟部署和最长五分钟轮询
       - name: 上传 Pages 产物
+        if: steps.prepare-site.outputs.unchanged != 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: _site
 
       - name: 部署到 Pages
         id: deployment
+        if: steps.prepare-site.outputs.unchanged != 'true'
         uses: actions/deploy-pages@v4
 
       # GitHub 的 camo 图片代理按源站 Cache-Control 缓存，Pages 固定 max-age=600。
       # 部署完成后清除该卡片的 camo 缓存，新访客即可取到本次生成的版本
       - name: 刷新 camo 缓存
         id: purge
+        if: steps.prepare-site.outputs.unchanged != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
@@ -201,6 +206,7 @@ jobs:
           UPSTREAM: ${{ steps.determine-users.outputs.UPSTREAM_USERNAME }}
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
           DEPLOY: ${{ steps.deployment.outcome }}
+          UNCHANGED: ${{ steps.prepare-site.outputs.unchanged }}
           RESTORED: ${{ steps.restore-cache.outputs.restored }}
           RESTORE_FAILED: ${{ steps.restore-cache.outputs.failed }}
           PURGE_RESULT: ${{ steps.purge.outputs.result }}

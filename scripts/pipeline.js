@@ -103,7 +103,51 @@ function formatDuration(seconds) {
 function siteBase() {
   const owner = (process.env.GITHUB_REPOSITORY_OWNER ?? "").toLowerCase();
   const repo = (process.env.GITHUB_REPOSITORY ?? "").split("/").pop();
+  if (!owner || !repo) {
+    return "";
+  }
   return `https://${owner}.github.io/${repo}`;
+}
+
+/**
+ * 两份最终汇总是否一致：只比数字字段与逐仓库指标，不比明细数组。
+ * 卡片只画增删行与图片，若拿卡片字节判定，提交数变化但增删行相同时会被漏掉。
+ */
+function summariesEqual(previous, current) {
+  if (!previous || !current) {
+    return false;
+  }
+  const totals = [
+    "repo_count",
+    "total_commits",
+    "total_additions",
+    "total_deletions",
+    "total_images",
+    "latest_commit_timestamp",
+  ];
+  for (const key of totals) {
+    if ((previous[key] ?? 0) !== (current[key] ?? 0)) {
+      return false;
+    }
+  }
+  const before = Object.keys(previous.repos ?? {}).sort();
+  const after = Object.keys(current.repos ?? {}).sort();
+  if (before.length !== after.length) {
+    return false;
+  }
+  for (let index = 0; index < before.length; index += 1) {
+    if (before[index] !== after[index]) {
+      return false;
+    }
+    const a = previous.repos[before[index]] ?? {};
+    const b = current.repos[after[index]] ?? {};
+    for (const key of ["commits", "additions", "deletions", "images", "latest"]) {
+      if ((a[key] ?? 0) !== (b[key] ?? 0)) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -314,10 +358,14 @@ function cmdSite() {
     encoding: "utf8",
   });
 
+  const unchanged = summariesEqual(readSummary(PREVIOUS_SUMMARY), summary);
   console.log(
     `📦 托管 ${names.length} 份统计缓存 + 1 张卡片 + 1 个索引页 + 1 份汇总`,
   );
-  emit({ repo_count: names.length });
+  if (unchanged) {
+    console.log("ℹ️  汇总与原发布版本一致，本次可跳过部署与清缓存");
+  }
+  emit({ repo_count: names.length, unchanged: String(unchanged) });
   return 0;
 }
 
@@ -553,11 +601,14 @@ function cmdSummary() {
     return value || fallback;
   };
 
+  const unchanged = env("UNCHANGED", "") === "true";
   const deployed = env("DEPLOY", "") === "success";
   const result = env("PURGE_RESULT", "");
   const detail = env("PURGE_DETAIL", "");
   let purge;
-  if (!deployed) {
+  if (unchanged) {
+    purge = "未执行（数据无变化，沿用已发布版本）";
+  } else if (!deployed) {
     purge = "未执行（本次未部署）";
   } else {
     purge =
@@ -573,9 +624,14 @@ function cmdSummary() {
     env("EVENT_NAME");
 
   const net = additions - deletions;
-  const page = env("PAGE_URL", "").replace(/\/+$/, "");
+  // 跳过部署时 deployment 步骤输出为空，用仓库名拼出站点地址
+  const page = (env("PAGE_URL", "") || siteBase()).replace(/\/+$/, "");
   const lines = [
-    deployed ? "## 贡献卡片已更新" : "## 贡献统计未发布",
+    unchanged
+      ? "## 贡献卡片无需更新"
+      : deployed
+        ? "## 贡献卡片已更新"
+        : "## 贡献统计未发布",
     "",
     "| 项目 | 值 |",
     "| --- | --- |",
@@ -597,7 +653,7 @@ function cmdSummary() {
     describeChanges(previous, current, intOf(env("RESTORE_FAILED", "0"))),
     "",
   );
-  if (page && deployed) {
+  if (page && (deployed || unchanged)) {
     lines.push(
       `- 卡片：${page}/contributions.svg`,
       `- 明细清单：${page}/data/manifest.json`,
@@ -671,4 +727,5 @@ export {
   jsonPrettyArray,
   readSummary,
   renderIndex,
+  summariesEqual,
 };
