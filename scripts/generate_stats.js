@@ -1331,89 +1331,10 @@ function sortAndReindex(cache) {
   return out;
 }
 
-/** 按已发布缓存的格式输出：`", "` / `": "` 分隔，非 ASCII 字符转义。 */
-function pyJsonString(value) {
-  let out = '"';
-  for (const ch of String(value)) {
-    const code = ch.codePointAt(0);
-    if (ch === '"') {
-      out += '\\"';
-    } else if (ch === "\\") {
-      out += "\\\\";
-    } else if (ch === "\n") {
-      out += "\\n";
-    } else if (ch === "\r") {
-      out += "\\r";
-    } else if (ch === "\t") {
-      out += "\\t";
-    } else if (ch === "\b") {
-      out += "\\b";
-    } else if (ch === "\f") {
-      out += "\\f";
-    } else if (code < 0x20 || code > 0x7e) {
-      if (code > 0xffff) {
-        const offset = code - 0x10000;
-        const high = 0xd800 + (offset >> 10);
-        const low = 0xdc00 + (offset & 0x3ff);
-        out += `\\u${high.toString(16).padStart(4, "0")}`;
-        out += `\\u${low.toString(16).padStart(4, "0")}`;
-      } else {
-        out += `\\u${code.toString(16).padStart(4, "0")}`;
-      }
-    } else {
-      out += ch;
-    }
-  }
-  return `${out}"`;
-}
-
-function pyJsonDumps(value) {
-  if (value === null || value === undefined) {
-    return "null";
-  }
-  if (typeof value === "string") {
-    return pyJsonString(value);
-  }
-  if (typeof value === "boolean") {
-    return value ? "true" : "false";
-  }
-  if (typeof value === "number") {
-    return String(value);
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => pyJsonDumps(item)).join(", ")}]`;
-  }
-  const parts = Object.entries(value).map(
-    ([key, item]) => `${pyJsonString(key)}: ${pyJsonDumps(item)}`,
-  );
-  return `{${parts.join(", ")}}`;
-}
-
-/** 序列化为与历史产物逐字节一致的紧凑 JSON。 */
+/** 序列化缓存：`_metadata` 在前，`data` 按仓库名分组。 */
 function serializeCache(metadata, data) {
-  const lines = ["{", `  "_metadata": ${pyJsonDumps(metadata)},`];
-
-  if (!data.size) {
-    lines.push('  "data": {}');
-  } else {
-    let repoIndex = 0;
-    for (const [repoName, commits] of data) {
-      lines.push(
-        repoIndex === 0
-          ? `  "data": {${pyJsonString(repoName)}: [`
-          : `    ,${pyJsonString(repoName)}: [`,
-      );
-      commits.forEach((commit, commitIndex) => {
-        const prefix = commitIndex === 0 ? "" : ",";
-        lines.push(`      ${prefix}${pyJsonDumps(commit)}`);
-      });
-      lines.push("    ]");
-      repoIndex += 1;
-    }
-    lines.push("  }");
-  }
-  lines.push("}");
-  return `${lines.join("\n")}\n`;
+  const tree = { _metadata: metadata, data: Object.fromEntries(data) };
+  return `${JSON.stringify(tree, null, 2)}\n`;
 }
 
 function saveCache(app, repoName, cache, log, repoId = "", fullName = "") {

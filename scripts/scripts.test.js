@@ -114,7 +114,7 @@ test("没有自定义标题时按账号生成标题", () => {
   assert.ok(plural.includes("usagis&apos; Code Contributions"));
 });
 
-test("缓存序列化与已发布产物逐字节一致", () => {
+test("缓存序列化可往返：结构一致且提交顺序不乱", () => {
   const metadata = {
     total_commits: 2,
     total_additions: 100,
@@ -148,20 +148,21 @@ test("缓存序列化与已发布产物逐字节一致", () => {
     ],
   ]);
 
-  const expected = `{
-  "_metadata": {"total_commits": 2, "total_additions": 100, "total_deletions": 20, "total_images": 1, "latest_commit_timestamp": "2026-11-16T10:00:00+08:00", "repo_id": "123", "full_name": "Usagi-wusaqi/API-Detector"},
-  "data": {"API-Detector": [
-      {"timestamp": "2026-11-15T10:00:00+08:00", "index": 1, "additions": 10, "deletions": 2, "images": 0, "url": "https://github.com/Usagi-wusaqi/API-Detector/commit/aaa"}
-      ,{"timestamp": "2026-11-16T10:00:00+08:00", "index": 2, "additions": 90, "deletions": 18, "images": 1, "url": "https://github.com/Usagi-wusaqi/API-Detector/commit/bbb"}
-    ]
-  }
-}
-`;
-  assert.equal(serializeCache(metadata, data), expected);
-  assert.equal(
-    serializeCache({}, new Map()),
-    '{\n  "_metadata": {},\n  "data": {}\n}\n',
+  const text = serializeCache(metadata, data);
+  assert.ok(text.endsWith("}\n"));
+  assert.deepEqual(JSON.parse(text), {
+    _metadata: metadata,
+    data: Object.fromEntries(data),
+  });
+  // 提交保持序号顺序，读回来不能被打乱
+  assert.deepEqual(
+    JSON.parse(text).data["API-Detector"].map((commit) => commit.index),
+    [1, 2],
   );
+  assert.deepEqual(JSON.parse(serializeCache({}, new Map())), {
+    _metadata: {},
+    data: {},
+  });
 });
 
 test("时间戳解析对齐 ISO 8601 与时区", () => {
