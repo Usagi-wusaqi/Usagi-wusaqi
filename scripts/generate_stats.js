@@ -813,8 +813,9 @@ function repoFromFullName(full, id = undefined) {
  * 把 GraphQL 返回的仓库节点变成仓库记录。
  *
  * `fork` 与 `parent` 直接照 REST 详情的形状填上，后面解析克隆目标时
- * `upstreamOf()` 能直接命中，省掉每个仓库一次详情请求。`databaseId` 与 REST
- * 的 `id` 是同一个值，仓库改名后缓存靠它接续，不会被当成新仓库重算。
+ * `upstreamOf()` 能直接命中，省掉每个仓库一次详情请求。`fullDatabaseId` 与 REST
+ * 的 `id` 是同一个值（`databaseId` 是 32 位整型，ID 超出范围时会返回 null），
+ * 仓库改名后缓存靠它接续，不会被当成新仓库重算。
  */
 function repoFromGraphqlNode(node) {
   const full = normalizeFullName(node?.nameWithOwner);
@@ -829,13 +830,20 @@ function repoFromGraphqlNode(node) {
     private: node?.isPrivate === true,
     fork: node?.isFork === true,
   };
-  if (node?.databaseId !== null && node?.databaseId !== undefined) {
-    repo.id = node.databaseId;
+  if (node?.fullDatabaseId !== null && node?.fullDatabaseId !== undefined) {
+    repo.id = node.fullDatabaseId;
   }
   const parentFull = normalizeFullName(node?.parent?.nameWithOwner);
   if (repo.fork && parentFull) {
     const [parentOwner, parentName] = parentFull.split("/");
     repo.parent = { name: parentName, owner: { login: parentOwner } };
+    // GraphQL 没有 REST 的 `source`（fork 网络的根）。父仓库本身还是 fork 时，
+    // 往上再取一层当根：只克隆直接父仓库会与根仓库的历史重叠，同一批提交算两遍
+    const rootFull = normalizeFullName(node?.parent?.parent?.nameWithOwner);
+    if (rootFull) {
+      const [rootOwner, rootName] = rootFull.split("/");
+      repo.source = { name: rootName, owner: { login: rootOwner } };
+    }
   }
   return repo;
 }
@@ -857,8 +865,11 @@ query ($cursor: String) {
         nameWithOwner
         isPrivate
         isFork
-        databaseId
-        parent { nameWithOwner }
+        fullDatabaseId
+        parent {
+          nameWithOwner
+          parent { nameWithOwner }
+        }
       }
     }
   }
@@ -1815,7 +1826,31 @@ function loadCache(app, repoName, log, repoId = "") {
     }
     cache.set(repo, entries);
   }
+
+  // 缓存文件是一个仓库一份，键名却可能是改名前的旧名（按 ID 接续来的），也可能
+  // 因为此前的改名逻辑同时留下新旧两个键。统一并到当前名下：旧键留着既读不到
+  // （按新名查缓存会当成空），又会在保存时和新算的一份并列写回，同一批提交算两遍
+  const foreign = [...cache.keys()].filter((key) => key !== repoName);
+  if (foreign.length) {
+    const merged = [...cache.values()].flat();
+    cache.clear();
+    if (merged.length) {
+      cache.set(repoName, merged);
+    }
+  }
   return normalizeCacheData(cache, log);
+}
+
+/**
+ * 缓存条目的稳定标识：提交 sha。
+ *
+ * 仓库改名或转让后，commit 地址里的 owner/name 会变，按地址比对会把整份缓存
+ * 判成失效、重取一遍详情；sha 不变，改名后仍能原地复用。
+ */
+function commitKeyOf(item) {
+  const url = String(item?.url ?? "");
+  const at = url.lastIndexOf("/commit/");
+  return at < 0 ? url : url.slice(at + 8);
 }
 function normalizeCacheData(cache, log) {
   const normalized = new Map();
@@ -1824,21 +1859,19 @@ function normalizeCacheData(cache, log) {
     const kept = [];
     let duplicates = 0;
     for (const item of items) {
-      const url = item.url ?? "";
-      if (url) {
-        if (seen.has(url)) {
+      // 按 sha 去重：改名前后同一提交会带着两个不同地址，按地址去重会留下两份
+      const key = commitKeyOf(item);
+      if (key) {
+        if (seen.has(key)) {
           duplicates += 1;
           continue;
         }
-        seen.add(url);
+        seen.add(key);
       }
       kept.push(item);
     }
     if (duplicates) {
-      log.color(
-        `    🧹 已按 commit URL 去重缓存: 删除 ${duplicates} 条重复数据`,
-        YELLOW,
-      );
+      log.color(`    🧹 已按 commit 去重缓存: 删除 ${duplicates} 条重复数据`, YELLOW);
     }
     normalized.set(repo, kept);
   }
@@ -1937,23 +1970,13 @@ function saveCache(app, repoName, cache, log, repoId = "", fullName = "") {
   return true;
 }
 
-function cleanStaleCache(
-  cache,
-  currentCommits,
-  repoName,
-  owner,
-  isApiFallback,
-  log,
-) {
+function cleanStaleCache(cache, currentCommits, repoName, isApiFallback, log) {
   if (!cache.has(repoName)) {
     return;
   }
 
-  const currentUrls = new Set(
-    currentCommits.map(
-      ([sha]) => `https://github.com/${owner}/${repoName}/commit/${sha}`,
-    ),
-  );
+  // 按 sha 比对：仓库改名后地址会变，地址不变才是真的失效提交
+  const currentKeys = new Set(currentCommits.map(([sha]) => sha));
   const stamps = currentCommits.map(([, date]) => date).filter(Boolean);
   const minTs = stamps.length ? stamps.reduce((a, b) => (a < b ? a : b)) : "";
   const maxTs = stamps.length ? stamps.reduce((a, b) => (a > b ? a : b)) : "";
@@ -1969,11 +1992,10 @@ function cleanStaleCache(
     (out ? outOfRange : inRange).push(item);
   }
 
-  const cachedInRange = new Set(
-    inRange.filter((item) => item.url).map((item) => item.url),
-  );
   const stale = new Set(
-    [...cachedInRange].filter((url) => !currentUrls.has(url)),
+    inRange
+      .map((item) => commitKeyOf(item))
+      .filter((key) => key && !currentKeys.has(key)),
   );
 
   if (isApiFallback) {
@@ -1997,7 +2019,7 @@ function cleanStaleCache(
 
   const newList = [
     ...outOfRange,
-    ...inRange.filter((item) => !stale.has(item.url)),
+    ...inRange.filter((item) => !stale.has(commitKeyOf(item))),
   ];
   if (newList.length) {
     cache.set(repoName, newList);
@@ -2144,20 +2166,19 @@ async function analyzeRepo(
   const totalCommits = commits.length;
 
   const oldCount = (cache.get(repoName) ?? []).length;
-  cleanStaleCache(cache, commits, repoName, owner, isApiFallback, log);
+  cleanStaleCache(cache, commits, repoName, isApiFallback, log);
   const staleCleaned = (cache.get(repoName) ?? []).length !== oldCount;
 
   const cacheIndex = new Map(
     (cache.get(repoName) ?? [])
-      .filter((item) => item.url)
-      .map((item) => [item.url, item]),
+      .map((item) => [commitKeyOf(item), item])
+      .filter(([key]) => key),
   );
 
   // 缓存未命中的 sha 一次性批量取详情
   const missing = [];
   for (const [sha] of commits) {
-    const url = `https://github.com/${owner}/${repoName}/commit/${sha}`;
-    if (!cacheIndex.has(url)) {
+    if (!cacheIndex.has(sha)) {
       missing.push(sha);
     }
   }
@@ -2188,8 +2209,10 @@ async function analyzeRepo(
     }
 
     const url = `https://github.com/${owner}/${repoName}/commit/${sha}`;
-    const hit = cacheIndex.get(url);
+    const hit = cacheIndex.get(sha);
     if (hit !== undefined) {
+      // 仓库改名后缓存里还是旧地址，顺手换成当前的，避免下次又被当成另一条
+      hit.url = url;
       totalAdditions += hit.additions;
       totalDeletions += hit.deletions;
       totalImages += hit.images;

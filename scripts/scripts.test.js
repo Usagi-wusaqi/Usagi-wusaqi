@@ -465,7 +465,7 @@ test("贡献清单按页收集仓库，跨页去重并在末页停止", async ()
   const pages = [
     contributedPage(
       [
-        contributionNode("org/one", { databaseId: 1001 }),
+        contributionNode("org/one", { fullDatabaseId: "1001" }),
         contributionNode("me/fork", {
           isFork: true,
           parent: { nameWithOwner: "up/real" },
@@ -485,7 +485,7 @@ test("贡献清单按页收集仓库，跨页去重并在末页停止", async ()
     assert.match(query, /repositoriesContributedTo/);
     assert.match(query, /contributionTypes: \[COMMIT\]/);
     assert.match(query, /includeUserRepositories: true/);
-    assert.match(query, /databaseId/);
+    assert.match(query, /fullDatabaseId/);
     cursors.push(variables.cursor);
     return pages[cursors.length - 1];
   });
@@ -496,7 +496,7 @@ test("贡献清单按页收集仓库，跨页去重并在末页停止", async ()
     ["org/one", "me/fork", "org/two"],
   );
   assert.equal(found.complete, true);
-  assert.equal(found.repos[0].id, 1001);
+  assert.equal(found.repos[0].id, "1001");
 
   // fork 与上游直接由查询带回来，解析克隆目标时不必再查一次详情
   const fork = found.repos.find((repo) => repo.full_name === "me/fork");
@@ -580,7 +580,7 @@ test("查询完整时名单以本轮为准，不完整时与上轮合并只增�
 
     const first = await discoverScopeRepos(app, async () =>
       contributedPage([
-        contributionNode("org/keep", { databaseId: 1001 }),
+        contributionNode("org/keep", { fullDatabaseId: "1001" }),
         contributionNode("org/gone"),
       ]),
     );
@@ -591,7 +591,7 @@ test("查询完整时名单以本轮为准，不完整时与上轮合并只增�
 
     // 第二轮完整：org/gone 已被删除或失去访问权，它自然退出名单
     const second = await discoverScopeRepos(app, async () =>
-      contributedPage([contributionNode("org/keep", { databaseId: 1001 })]),
+      contributedPage([contributionNode("org/keep", { fullDatabaseId: "1001" })]),
     );
     assert.equal(second.complete, true);
     assert.deepEqual(
@@ -611,7 +611,7 @@ test("查询完整时名单以本轮为准，不完整时与上轮合并只增�
 
     const saved = JSON.parse(fs.readFileSync(file, "utf8"));
     // 仓库 ID 一并落盘：改名后缓存靠它接续，不会被当成新仓库重算
-    assert.deepEqual(saved.repos, [{ full_name: "org/keep", id: 1001 }]);
+    assert.deepEqual(saved.repos, [{ full_name: "org/keep", id: "1001" }]);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -751,6 +751,122 @@ test("清单里未标 fork 的仓库会查详情换算上游，明确的非 fork
 
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
+
+test("仓库改名后按 ID 接续缓存，旧键的提交不会被算两遍", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "usagi-rename-"));
+  try {
+    const app = new App("me", "token");
+    app.cacheDir = dir;
+    fs.writeFileSync(
+      path.join(dir, "old.json"),
+      JSON.stringify({
+        _metadata: { repo_id: 73, total_commits: 1 },
+        data: {
+          old: [
+            {
+              timestamp: "2026-01-01T00:00:00Z",
+              index: 1,
+              additions: 5,
+              deletions: 1,
+              images: 0,
+              url: "https://github.com/me/old/commit/abc",
+            },
+            // 同一提交改名前后各存过一份：地址不同、sha 相同，只该留一条
+            {
+              timestamp: "2026-01-01T00:00:00Z",
+              index: 2,
+              additions: 5,
+              deletions: 1,
+              images: 0,
+              url: "https://github.com/me/new/commit/abc",
+            },
+          ],
+        },
+      }),
+    );
+
+    const cache = loadCache(app, "new", { color() {} }, "73");
+
+    // 文件按新名接续，分组键也挪到新名下：两个键并存时，旧键既读不到又会被
+    // 原样写回，汇总会把同一批提交算两遍；同一 sha 的旧、新地址也只留一条
+    assert.deepEqual([...cache.keys()], ["new"]);
+    assert.equal(cache.get("new").length, 1);
+    assert.equal(fs.existsSync(path.join(dir, "new.json")), true);
+    assert.equal(fs.existsSync(path.join(dir, "old.json")), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("缓存里残留改名前的分组键时，读入即归并到当前仓库名下", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "usagi-rekey-"));
+  try {
+    const app = new App("me", "token");
+    app.cacheDir = dir;
+    const entry = (url) => ({
+      timestamp: "2026-01-01T00:00:00Z",
+      index: 1,
+      additions: 5,
+      deletions: 1,
+      images: 0,
+      url,
+    });
+    fs.writeFileSync(
+      path.join(dir, "new.json"),
+      JSON.stringify({
+        _metadata: {},
+        data: {
+          old: [entry("https://github.com/me/old/commit/abc")],
+          new: [entry("https://github.com/me/new/commit/abc")],
+        },
+      }),
+    );
+
+    const cache = loadCache(app, "new", { color() {} });
+
+    assert.deepEqual([...cache.keys()], ["new"]);
+    assert.equal(cache.get("new").length, 1);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("清理失效提交按 sha 比对，仓库改名不会把整份缓存判成过期", () => {
+  const log = { color() {} };
+  const entry = (url) => ({
+    timestamp: "2026-01-01T00:00:00Z",
+    index: 1,
+    additions: 5,
+    deletions: 1,
+    images: 0,
+    url,
+  });
+
+  const renamed = new Map([["repo", [entry("https://github.com/me/old/commit/abc")]]]);
+  cleanStaleCache(renamed, [["abc", "2026-01-01T00:00:00Z"]], "repo", false, log);
+  assert.equal(renamed.get("repo").length, 1);
+
+  const rewritten = new Map([["repo", [entry("https://github.com/me/repo/commit/abc")]]]);
+  cleanStaleCache(rewritten, [["def", "2026-01-02T00:00:00Z"]], "repo", false, log);
+  assert.equal(rewritten.has("repo"), false);
+});
+
+test("fork 套 fork 时按根仓库解析克隆目标，避免与根仓库重复统计", async () => {
+  const app = new App("me", "token");
+  const found = await discoverRepos(app, async () =>
+    contributedPage([
+      contributionNode("me/mid", {
+        isFork: true,
+        parent: { nameWithOwner: "x/mid", parent: { nameWithOwner: "up/root" } },
+      }),
+    ]),
+  );
+
+  const [owner, name] = await getUpstreamRepo(app, found.repos[0], async () => {
+    throw new Error("不该再请求详情");
+  });
+  assert.deepEqual([owner, name], ["up", "root"]);
+});
 
 test("汇总比对：完全一致才判为无需部署", () => {
   const base = summaryFixture();
