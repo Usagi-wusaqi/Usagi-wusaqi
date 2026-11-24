@@ -160,7 +160,7 @@ export async function run() {
         return 1;
       }
       printColor(
-        "⚠️  贡献清单查询不完整（配额或翻页中断），本轮与上轮名单合并",
+        "⚠️  贡献清单查询不完整（配额或某一年的查询中断），本轮与上轮名单合并",
         YELLOW,
       );
     }

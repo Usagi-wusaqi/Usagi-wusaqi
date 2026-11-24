@@ -470,17 +470,26 @@ test("统计范围合并：清单在前、按名去重、排除名单生效", ()
   assert.equal(repos[0].html_url, "https://github.com/org/extra");
 });
 
-/** 造一份 GraphQL 贡献清单响应；不传 pageInfo 就是最后一页。 */
-const contributedPage = (nodes, pageInfo = {}) => ({
+/** 造「有哪些年份有贡献」的响应。 */
+const yearsPage = (years, login = "me") => ({
+  viewer: { login, contributionsCollection: { contributionYears: years } },
+});
+
+/** 造某一年某一个时间段的响应；仓库按接口的 commitContributionsByRepository 形状包一层。 */
+const windowPage = (nodes) => ({
   viewer: {
-    login: "me",
-    repositoriesContributedTo: {
-      totalCount: nodes.length,
-      pageInfo: { hasNextPage: false, endCursor: null, ...pageInfo },
-      nodes,
+    contributionsCollection: {
+      commitContributionsByRepository: nodes.map((node) => ({ repository: node })),
     },
   },
 });
+
+/**
+ * 一轮贡献清单的假查询：先回年份，之后每段都回这一批仓库。
+ * 直接当作 discoverRepos / discoverScopeRepos 的 request 参数用。
+ */
+const contributedPage = (nodes) => async (instance, query) =>
+  query.includes("contributionYears") ? yearsPage([2026]) : windowPage(nodes);
 
 const contributionNode = (full, extra = {}) => {
   const [owner, name] = full.split("/");
@@ -493,42 +502,46 @@ const contributionNode = (full, extra = {}) => {
   };
 };
 
-test("贡献清单按页收集仓库，跨页去重并在末页停止", async () => {
+test("按年份逐段收集仓库，跨年去重", async () => {
   const app = new App("me", "token");
-  app.api.max_api_pages = 5;
 
-  const pages = [
-    contributedPage(
-      [
+  const queries = [];
+  const found = await discoverRepos(app, async (instance, query, variables) => {
+    queries.push({ query, variables });
+    if (query.includes("contributionYears")) {
+      return yearsPage([2025, 2024]);
+    }
+    assert.match(query, /commitContributionsByRepository/);
+    assert.match(query, /fullDatabaseId/);
+    if (variables.from.startsWith("2025-01")) {
+      return windowPage([
         contributionNode("org/one", { fullDatabaseId: "1001" }),
         contributionNode("me/fork", {
           isFork: true,
           parent: { nameWithOwner: "up/real" },
         }),
-      ],
-      { hasNextPage: true, endCursor: "c1" },
-    ),
-    contributedPage(
-      [contributionNode("me/fork", { isFork: true }), contributionNode("org/two")],
-      { hasNextPage: false, endCursor: "c2" },
-    ),
-  ];
-
-  const cursors = [];
-  const found = await discoverRepos(app, async (instance, query, variables) => {
-    // 一次查询直接拿仓库清单，不再搜提交
-    assert.match(query, /repositoriesContributedTo/);
-    assert.match(query, /contributionTypes: \[COMMIT\]/);
-    assert.match(query, /includeUserRepositories: true/);
-    assert.match(query, /fullDatabaseId/);
-    cursors.push(variables.cursor);
-    return pages[cursors.length - 1];
+      ]);
+    }
+    if (variables.from.startsWith("2025-07")) {
+      // 同一个仓库在上下半年都出现过，只算一次
+      return windowPage([contributionNode("me/fork", { isFork: true })]);
+    }
+    if (variables.from.startsWith("2024-01")) {
+      return windowPage([contributionNode("org/old", { fullDatabaseId: "1002" })]);
+    }
+    return windowPage([]);
   });
 
-  assert.deepEqual(cursors, [null, "c1"]);
+  // 先问年份，再按年份从新到旧、一年两段
+  assert.equal(queries.length, 1 + 2 * 2);
+  assert.ok(queries[0].query.includes("contributionYears"));
+  assert.deepEqual(queries[1].variables, {
+    from: "2025-01-01T00:00:00Z",
+    to: "2025-07-01T00:00:00Z",
+  });
   assert.deepEqual(
     found.repos.map((repo) => repo.full_name),
-    ["org/one", "me/fork", "org/two"],
+    ["org/one", "me/fork", "org/old"],
   );
   assert.equal(found.complete, true);
   assert.equal(found.repos[0].id, "1001");
@@ -543,7 +556,7 @@ test("贡献清单按页收集仓库，跨页去重并在末页停止", async ()
   assert.equal(unknown, false);
 });
 
-test("贡献清单查询失败时返回空名单并标记结果不完整", async () => {
+test("问年份的查询失败时返回空名单并标记结果不完整", async () => {
   const app = new App("me", "token");
   const found = await discoverRepos(app, async () => {
     throw new ApiError("rate_limit", "GitHub GraphQL 配额耗尽");
@@ -552,25 +565,47 @@ test("贡献清单查询失败时返回空名单并标记结果不完整", async
   assert.equal(found.complete, false);
 });
 
-test("贡献清单翻到页数上限还没到底时标记结果不完整", async () => {
+test("某一段查询中断时标记结果不完整，已查到的照常返回", async () => {
   const app = new App("me", "token");
-  app.api.max_api_pages = 2;
 
-  let calls = 0;
-  const found = await discoverRepos(app, async () => {
-    calls += 1;
-    return contributedPage([contributionNode(`org/r${calls}`)], {
-      hasNextPage: true,
-      endCursor: `c${calls}`,
-    });
+  const found = await discoverRepos(app, async (instance, query, variables) => {
+    if (query.includes("contributionYears")) {
+      return yearsPage([2026, 2025]);
+    }
+    if (variables.from.startsWith("2026-01")) {
+      return windowPage([contributionNode("org/recent")]);
+    }
+    throw new ApiError("failure", "HTTP 502: Bad Gateway");
   });
 
-  assert.equal(calls, 2);
   assert.equal(found.complete, false);
   assert.deepEqual(
     found.repos.map((repo) => repo.full_name),
-    ["org/r1", "org/r2"],
+    ["org/recent"],
   );
+});
+
+test("年份超过上限时只查最近的部分，并标记范围不完整", async () => {
+  const app = new App("me", "token");
+  const years = Array.from({ length: 11 }, (_, i) => 2026 - i);
+  const asked = [];
+
+  const found = await discoverRepos(app, async (instance, query, variables) => {
+    if (query.includes("contributionYears")) {
+      return yearsPage(years);
+    }
+    asked.push(variables.from.slice(0, 4));
+    return windowPage([contributionNode(`org/y${variables.from.slice(0, 4)}`)]);
+  });
+
+  // 名单只覆盖最近 10 年：范围不完整，调用方据此保留旧名单与旧缓存
+  assert.equal(found.complete, false);
+  // 截断只影响年份数量，其余年份的两段都要查完，不能提前收工
+  assert.deepEqual(
+    asked,
+    years.slice(0, 10).flatMap((year) => [String(year), String(year)]),
+  );
+  assert.equal(found.repos.length, 10);
 });
 
 test("令牌不是本人时整轮放弃，不拿 bot 的空名单覆盖缓存", async () => {
@@ -579,10 +614,10 @@ test("令牌不是本人时整轮放弃，不拿 bot 的空名单覆盖缓存", 
   let calls = 0;
   const found = await discoverRepos(app, async () => {
     calls += 1;
-    return { viewer: { login: "github-actions[bot]", repositoriesContributedTo: null } };
+    return yearsPage([], "github-actions[bot]");
   });
 
-  // 登录名不符就不该继续翻页
+  // 登录名不符就不该继续查年份下的仓库
   assert.equal(calls, 1);
   assert.deepEqual(found.repos, []);
   assert.equal(found.complete, false);
@@ -591,12 +626,15 @@ test("令牌不是本人时整轮放弃，不拿 bot 的空名单覆盖缓存", 
 test("贡献清单里的私有仓库直接跳过", async () => {
   const app = new App("me", "token");
 
-  const found = await discoverRepos(app, async () =>
-    contributedPage([
+  const found = await discoverRepos(app, async (instance, query) => {
+    if (query.includes("contributionYears")) {
+      return yearsPage([2026]);
+    }
+    return windowPage([
       contributionNode("org/pub"),
       contributionNode("org/priv", { isPrivate: true }),
-    ]),
-  );
+    ]);
+  });
 
   assert.deepEqual(
     found.repos.map((repo) => repo.full_name),
@@ -613,7 +651,8 @@ test("查询完整时名单以本轮为准，不完整时与上轮合并只增�
     app.cacheDir = dir;
     const file = path.join(dir, "scope", "index.json");
 
-    const first = await discoverScopeRepos(app, async () =>
+    const first = await discoverScopeRepos(
+      app,
       contributedPage([
         contributionNode("org/keep", { fullDatabaseId: "1001" }),
         contributionNode("org/gone"),
@@ -625,7 +664,8 @@ test("查询完整时名单以本轮为准，不完整时与上轮合并只增�
     );
 
     // 第二轮完整：org/gone 已被删除或失去访问权，它自然退出名单
-    const second = await discoverScopeRepos(app, async () =>
+    const second = await discoverScopeRepos(
+      app,
       contributedPage([contributionNode("org/keep", { fullDatabaseId: "1001" })]),
     );
     assert.equal(second.complete, true);
@@ -658,11 +698,10 @@ test("转私有的仓库从名单里立刻退出", async () => {
     const app = new App("me", "token");
     app.cacheDir = dir;
 
-    await discoverScopeRepos(app, async () =>
-      contributedPage([contributionNode("org/one")]),
-    );
+    await discoverScopeRepos(app, contributedPage([contributionNode("org/one")]));
 
-    const second = await discoverScopeRepos(app, async () =>
+    const second = await discoverScopeRepos(
+      app,
       contributedPage([contributionNode("org/one", { isPrivate: true })]),
     );
 
@@ -886,7 +925,8 @@ test("清理失效提交按 sha 比对，仓库改名不会把整份缓存判成
 
 test("fork 套 fork 时按根仓库解析克隆目标，避免与根仓库重复统计", async () => {
   const app = new App("me", "token");
-  const found = await discoverRepos(app, async () =>
+  const found = await discoverRepos(
+    app,
     contributedPage([
       contributionNode("me/mid", {
         isFork: true,

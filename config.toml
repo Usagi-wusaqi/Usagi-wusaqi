@@ -5,7 +5,7 @@
 [api]
 # GitHub REST API 基础地址（通常无需修改；GraphQL 请求也发往这个地址的 /graphql）
 github_api_base = "https://api.github.com"
-# 分页请求的最大页数（贡献仓库清单按每页 100 条翻页）
+# 分页请求的最大页数（账号邮箱、API 兜底取提交）
 max_api_pages = 10
 # 每页返回条目数（GitHub 最大支持 100）
 per_page = 100
@@ -14,19 +14,13 @@ rate_limit_warn_threshold = 50
 
 # ---- 统计范围 ----
 [repos]
-# 统计范围只有一个来源：GraphQL 的 repositoriesContributedTo，直接列出「我提交过
-# 的仓库」，一次翻 100 个、游标翻页拿全，返回结果自带 fork 与上游关系。查询里带了
-# includeUserRepositories: true，名下有自己提交的仓库本来就包含在内；一次提交都没有
-# 的仓库不进统计，它们对卡片是零贡献，克隆下来只是白跑。
-# 口径按账号归属、只看默认分支，比主页贡献图窄一点：贡献图还数 gh-pages 上的提交，
-# 那里放的是页面而不是代码，不计入行数。
-# 查询完整时名单以本轮为准，仓库删除、转私有、失去访问权都会自然退出；查询失败或
-# 翻页中断时与上轮合并、只增不减，不会因为一次失败把已统计的仓库丢掉；一条都没查到
-# 时直接终止，不拿旧名单静默顶替（卡片会停在旧数据上，而 CI 一直是绿的）。
-# 注意：这一步必须用账号本人的令牌（EMAILS_TOKEN），Actions 内置令牌的身份是
-# bot，查到的是它自己的贡献。名单整个重建就删掉 scripts/stats_cache/scope/index.json
-# 后直接跑 generate_stats.js；走 pipeline 或 CI 时这份缓存会先被 restore 从站点取回，
-# 删本地文件不起作用
+# 统计范围以 GraphQL 查询为准：先问出哪些年份有贡献，再逐年按上下半年查
+# contributionsCollection，并成仓库清单。逐年查是为了覆盖全部历史，只看最近一年的
+# 口径会漏掉久未变动的仓库。口径按账号归属、只看默认分支，比主页贡献图窄一点。
+# 查询完整时名单以本轮为准，查询不完整时与上轮合并、只增不减。
+# 必须用账号本人的令牌（EMAILS_TOKEN）：Actions 内置令牌查到的 viewer 是 bot 自己。
+# 名单整个重建就删掉 scripts/stats_cache/scope/index.json 再直接跑 generate_stats.js；
+# 走 pipeline 或 CI 时这份缓存先从站点取回，删本地文件不起作用。
 # 设为 false 则跳过查询，只统计下面的 include 清单
 discover = true
 # 无论是否自动查询，都额外统计这些仓库（owner/name 或仓库地址）；私有仓库、

@@ -101,39 +101,64 @@ export function repoFromGraphqlNode(node) {
   return repo;
 }
 
-/** 贡献清单用的查询：按仓库分组，一页 100 个，游标翻页。 */
-export const CONTRIBUTED_REPOS_QUERY = `
-query ($cursor: String) {
+/**
+ * 先问有哪些年份有贡献，再按年份逐段取仓库。
+ *
+ * `repositoriesContributedTo` 只列最近一年（字段说明里的 "recently"），一年前动过、
+ * 此后没再碰的仓库会整份掉队。`contributionsCollection` 可以传 from/to 指定时间段，
+ * 逐年查一遍就能拿回全部历史。
+ */
+export const CONTRIBUTION_YEARS_QUERY = `
+query {
   viewer {
     login
-    repositoriesContributedTo(
-      first: 100
-      after: $cursor
-      includeUserRepositories: true
-      contributionTypes: [COMMIT]
-      orderBy: { field: NAME, direction: ASC }
-    ) {
-      pageInfo { hasNextPage endCursor }
-      nodes {
-        nameWithOwner
-        isPrivate
-        isFork
-        fullDatabaseId
-        parent {
+    contributionsCollection { contributionYears }
+  }
+}`;
+
+/** 单年单段的查询：贡献按仓库分组，一段最多 100 个仓库。 */
+export const CONTRIBUTIONS_WINDOW_QUERY = `
+query ($from: DateTime!, $to: DateTime!) {
+  viewer {
+    contributionsCollection(from: $from, to: $to) {
+      commitContributionsByRepository(maxRepositories: 100) {
+        repository {
           nameWithOwner
-          parent { nameWithOwner }
+          isPrivate
+          isFork
+          fullDatabaseId
+          parent {
+            nameWithOwner
+            parent { nameWithOwner }
+          }
         }
       }
     }
   }
 }`;
 
+// 最多查这么多年份，防账号历史异常长时把配额和运行时间耗光
+const MAX_CONTRIBUTION_YEARS = 10;
+
 /**
- * 用 GraphQL 的 `repositoriesContributedTo` 列出「有自己提交的仓库」。
+ * 一个自然年切成上下两段。
  *
- * 主页贡献图的口径就是它：按账号归属统计默认分支（含 gh-pages）上的提交，
- * 直接给出仓库清单，不用先搜提交再反查仓库。名单覆盖全部历史，没有时间窗，
- * 单页 100 个、游标翻页即可拿全，返回的每个仓库还带着 fork 与上游关系。
+ * `contributionsCollection` 的 from/to 跨度不能超过一年，闰年按 366 天算就可能被
+ * 判超限；上下半年各 100 个仓库的量级也更稳，不会撞上单次查询的资源上限。
+ */
+export function yearWindows(year) {
+  return [
+    [`${year}-01-01T00:00:00Z`, `${year}-07-01T00:00:00Z`],
+    [`${year}-07-01T00:00:00Z`, `${year}-12-31T23:59:59Z`],
+  ];
+}
+
+/**
+ * 用 GraphQL 的 `contributionsCollection` 按年份列出「有自己提交的仓库」。
+ *
+ * 口径与主页贡献图一致：按账号归属统计默认分支上的提交，直接给出仓库清单，
+ * 不用先搜提交再反查仓库。逐年查完取并集，覆盖全部历史；返回的每个仓库还带着
+ * fork 与上游关系。
  *
  * 令牌必须是账号本人的：Actions 内置令牌的身份是 bot，查到的 viewer 是它自己。
  * 因此拿到的登录名与统计目标不符时整轮放弃，免得把空名单当成「没有贡献的仓库」
@@ -150,54 +175,14 @@ export async function discoverRepos(app, request = null) {
         variables,
         instance.emailsToken || instance.token,
       ));
-  const maxPages = Math.max(intOf(app.api.max_api_pages, 10), 1);
   const found = new Map();
   // 私有仓库不进统计（卡片只算公开仓库），记下来只为日志和清缓存
   const privateRepos = new Map();
   let complete = true;
-  let cursor = null;
 
-  for (let page = 0; page < maxPages; page += 1) {
-    let data;
-    try {
-      data = await ask(app, CONTRIBUTED_REPOS_QUERY, { cursor });
-    } catch (exc) {
-      // 配额用完或接口出错：已找到的照常并进名单，本轮标记为不完整，
-      // 调用方据此保留旧缓存，不会把历史名单清掉
-      const limited = exc instanceof ApiError && exc.kind === "rate_limit";
-      printColor(
-        limited
-          ? "⚠️  GraphQL 配额用完，本轮只覆盖到已找到的仓库"
-          : `⚠️  贡献仓库查询中断，仅统计已找到的仓库: ${exc?.message || "请求失败"}`,
-        YELLOW,
-      );
-      complete = false;
-      break;
-    }
-
-    const viewer = data?.viewer;
-    if (!viewer) {
-      printColor("⚠️  贡献仓库查询没有返回 viewer，本轮跳过自动发现", YELLOW);
-      complete = false;
-      break;
-    }
-    if (
-      page === 0 &&
-      String(viewer.login ?? "").toLowerCase() !==
-        String(app.originUsername ?? "").toLowerCase()
-    ) {
-      printColor(
-        `⚠️  查询所用令牌属于 ${viewer.login || "未知账号"}，与统计目标 ` +
-          `${app.originUsername} 不一致，本轮跳过自动发现`,
-        YELLOW,
-      );
-      return { repos: [], privateRepos: [], complete: false };
-    }
-
-    const collection = viewer.repositoriesContributedTo;
-    const nodes = Array.isArray(collection?.nodes) ? collection.nodes : [];
-    for (const node of nodes) {
-      const repo = repoFromGraphqlNode(node);
+  const collect = (nodes) => {
+    for (const node of Array.isArray(nodes) ? nodes : []) {
+      const repo = repoFromGraphqlNode(node?.repository ?? node);
       if (!repo) {
         continue;
       }
@@ -210,22 +195,81 @@ export async function discoverRepos(app, request = null) {
         found.set(key, repo);
       }
     }
+  };
 
-    if (!collection?.pageInfo?.hasNextPage) {
-      break;
+  // 第一步：拿到有贡献的年份，以及令牌对应的账号
+  let head;
+  try {
+    head = await ask(app, CONTRIBUTION_YEARS_QUERY, {});
+  } catch (exc) {
+    // 配额用完或接口出错：本轮标记为不完整，调用方据此保留旧缓存
+    const limited = exc instanceof ApiError && exc.kind === "rate_limit";
+    printColor(
+      limited
+        ? "⚠️  GraphQL 配额用完，本轮查不到贡献仓库"
+        : `⚠️  贡献仓库查询中断: ${exc?.message || "请求失败"}`,
+      YELLOW,
+    );
+    return { repos: [], privateRepos: [], complete: false };
+  }
+
+  const viewer = head?.viewer;
+  if (!viewer) {
+    printColor("⚠️  贡献仓库查询没有返回 viewer，本轮跳过自动发现", YELLOW);
+    return { repos: [], privateRepos: [], complete: false };
+  }
+  if (
+    String(viewer.login ?? "").toLowerCase() !==
+    String(app.originUsername ?? "").toLowerCase()
+  ) {
+    printColor(
+      `⚠️  查询所用令牌属于 ${viewer.login || "未知账号"}，与统计目标 ` +
+        `${app.originUsername} 不一致，本轮跳过自动发现`,
+      YELLOW,
+    );
+    return { repos: [], privateRepos: [], complete: false };
+  }
+
+  const years = (
+    Array.isArray(viewer.contributionsCollection?.contributionYears)
+      ? viewer.contributionsCollection.contributionYears
+      : []
+  )
+    .map((year) => intOf(year, 0))
+    .filter(Boolean)
+    .sort((a, b) => b - a);
+  if (years.length > MAX_CONTRIBUTION_YEARS) {
+    // 名单只覆盖最近这些年，范围不完整：调用方会与上轮名单合并，不动旧缓存
+    complete = false;
+    printColor(
+      `⚠️  贡献年份超过 ${MAX_CONTRIBUTION_YEARS} 个，只覆盖最近的部分`,
+      YELLOW,
+    );
+  }
+
+  // 第二步：逐年逐段取仓库。查询出错才停，年份数量截断不影响其余年份继续查
+  let aborted = false;
+  for (const year of years.slice(0, MAX_CONTRIBUTION_YEARS)) {
+    for (const [from, to] of yearWindows(year)) {
+      let data;
+      try {
+        data = await ask(app, CONTRIBUTIONS_WINDOW_QUERY, { from, to });
+      } catch (exc) {
+        const limited = exc instanceof ApiError && exc.kind === "rate_limit";
+        printColor(
+          limited
+            ? `⚠️  GraphQL 配额用完，${year} 年只覆盖到已查到的仓库`
+            : `⚠️  ${year} 年贡献查询中断，仅统计已查到的仓库: ${exc?.message || "请求失败"}`,
+          YELLOW,
+        );
+        complete = false;
+        aborted = true;
+        break;
+      }
+      collect(data?.viewer?.contributionsCollection?.commitContributionsByRepository);
     }
-    cursor = collection.pageInfo.endCursor ?? null;
-    if (!cursor) {
-      complete = false;
+    if (aborted) {
       break;
-    }
-    if (page === maxPages - 1) {
-      // 翻到配置的页数上限还没到底：名单只并已找到的部分
-      complete = false;
-      printColor(
-        `⚠️  贡献仓库超过 ${maxPages} 页（${maxPages * 100} 个），只覆盖到前面部分`,
-        YELLOW,
-      );
     }
   }
 
@@ -289,7 +333,7 @@ export function mergeRepoLists(first, second) {
 
 /**
  * 落盘本轮统计范围：查询完整时以本轮为准，仓库删除、转私有、失去访问权都会
- * 自然退出名单；查询不完整（配额用完、翻页中断）时与上一轮合并，只增不减，
+ * 自然退出名单；查询不完整（配额用完、某一年没查全）时与上一轮合并，只增不减，
  * 已知仓库不会因为一次失败就掉队。
  *
  * 名单本身仍是缓存的意义所在：查询彻底失败时下一轮还能拿它兜底，站点上的
