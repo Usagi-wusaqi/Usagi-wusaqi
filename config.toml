@@ -76,8 +76,6 @@ images = "Images"
 
 # ---- 运行行为 ----
 [behavior]
-# 时区偏移（小时），用于时间戳格式化（8 = UTC+8 北京时间）
-timezone_offset_hours = 8
 # 被识别为图片的文件扩展名列表
 image_extensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp", ".ico"]
 # 每处理多少个 commit 打印一次进度
