@@ -746,7 +746,7 @@ test("显式清单也校验：私有与 404 剔除，网络抖动时按原样保
   assert.equal(kept[1].fork, undefined);
 });
 
-test("清单里的仓库读到详情后，解析克隆目标时不再重复查一次", async () => {
+test("清单里的仓库读到详情后，解析克隆目标时不重复查一次", async () => {
   const app = new App("me", "token");
   let calls = 0;
   const included = await confirmIncludedRepos(app, ["org/mirror"], async () => {
@@ -807,7 +807,7 @@ test("清单里未标 fork 的仓库会查详情换算上游，明确的非 fork
   assert.deepEqual([owner, name], ["up", "r"]);
   assert.equal(called, 1);
 
-  // 发现结果里明确标了非 fork，不再多查一次
+  // 发现结果里明确标了非 fork，不发详情请求
   const [o2, n2] = await getUpstreamRepo(
     app,
     { fork: false, name: "r", full_name: "org/r" },

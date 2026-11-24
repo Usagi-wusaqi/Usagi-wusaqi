@@ -101,9 +101,9 @@ export function loadCache(app, repoName, log, repoId = "") {
     cache.set(repo, entries);
   }
 
-  // 缓存文件是一个仓库一份，键名却可能是改名前的旧名（按 ID 接续来的），也可能
-  // 因为此前的改名逻辑同时留下新旧两个键。统一并到当前名下：旧键留着既读不到
-  // （按新名查缓存会当成空），又会在保存时和新算的一份并列写回，同一批提交算两遍
+  // 缓存文件一个仓库一份，键名可能是改名前的旧名（按 ID 接续来的），也可能同一
+  // 仓库存在多个键。统一并到当前名下：旧键留着既读不到（按新名查缓存会当成空），
+  // 又会在保存时和新算的一份并列写回，同一批提交算两遍
   const foreign = [...cache.keys()].filter((key) => key !== repoName);
   if (foreign.length) {
     const merged = [...cache.values()].flat();

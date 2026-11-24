@@ -104,9 +104,8 @@ export function repoFromGraphqlNode(node) {
 /**
  * 先问有哪些年份有贡献，再按年份逐段取仓库。
  *
- * `repositoriesContributedTo` 只列最近一年（字段说明里的 "recently"），一年前动过、
- * 此后没再碰的仓库会整份掉队。`contributionsCollection` 可以传 from/to 指定时间段，
- * 逐年查一遍就能拿回全部历史。
+ * `contributionsCollection` 可以传 from/to 指定时间段，`contributionYears` 一次
+ * 给出全部有贡献的年份，逐年逐段查一遍即可覆盖完整历史。
  */
 export const CONTRIBUTION_YEARS_QUERY = `
 query {
@@ -137,7 +136,7 @@ query ($from: DateTime!, $to: DateTime!) {
   }
 }`;
 
-// 最多查这么多年份，防账号历史异常长时把配额和运行时间耗光
+// 脚本自设的年份上限：每个年份要发两次查询，历史极长时会吃掉 GraphQL 配额与运行时间
 const MAX_CONTRIBUTION_YEARS = 10;
 
 /**
@@ -156,9 +155,8 @@ export function yearWindows(year) {
 /**
  * 用 GraphQL 的 `contributionsCollection` 按年份列出「有自己提交的仓库」。
  *
- * 口径与主页贡献图一致：按账号归属统计默认分支上的提交，直接给出仓库清单，
- * 不用先搜提交再反查仓库。逐年查完取并集，覆盖全部历史；返回的每个仓库还带着
- * fork 与上游关系。
+ * 口径与主页贡献图一致：按账号归属统计默认分支上的提交，查询直接给出仓库清单。
+ * 逐年查完取并集，覆盖全部历史；返回的每个仓库还带着 fork 与上游关系。
  *
  * 令牌必须是账号本人的：Actions 内置令牌的身份是 bot，查到的 viewer 是它自己。
  * 因此拿到的登录名与统计目标不符时整轮放弃，免得把空名单当成「没有贡献的仓库」

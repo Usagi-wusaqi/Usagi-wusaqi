@@ -126,9 +126,8 @@ export async function run() {
   app.addEmails(accountEmails);
   printColor(`📧 已读取账号下的 ${accountEmails.size} 个邮箱`, GREEN);
 
-  // 统计范围的唯一来源是贡献清单：查询里 includeUserRepositories: true，
-  // 名下有自己提交的仓库本来就包含在内；再查一份名下列表只会多出
-  // 「我拥有但零提交」的仓库，克隆下来对卡片没有任何贡献
+  // 统计范围的唯一来源是贡献清单：贡献按账号归属统计，名下有自己提交的仓库
+  // 自然包含在内；零提交的仓库不进清单，克隆下来对卡片也没有贡献
   let scopeRepos = [];
   // 只统计 include 清单时范围并不完整，不能拿它去清理旧缓存
   let scopeComplete = false;
@@ -146,8 +145,8 @@ export async function run() {
       NC,
     );
     if (!found.complete) {
-      // 一条都没查到通常是令牌或权限出了问题。此时若只告警并沿用旧名单，卡片会
-      // 长期停在旧数据上而 CI 始终是绿的，问题可以挂几周没人发现，所以直接失败
+      // 一条都没查到通常是令牌或权限出了问题。直接失败，不沿用旧名单：否则卡片会
+      // 长期停在旧数据上而 CI 始终是绿的，问题可以挂几周没人发现
       if (!found.fresh) {
         printColor(
           "❌ 贡献清单查询没有任何结果，统计范围无法确认，本次终止",
@@ -198,7 +197,7 @@ export async function run() {
     );
   }
 
-  // 产物只发布到 Pages，不再写回仓库；即使数据没变也要重新生成卡片
+  // 产物只发布到 Pages，不写回仓库；即使数据没变也要重新生成卡片
   if (!anyChanged) {
     printColor("ℹ️  数据无变化，仍重新生成卡片供 Pages 发布", NC);
   }

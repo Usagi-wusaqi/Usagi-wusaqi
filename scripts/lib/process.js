@@ -211,7 +211,7 @@ export async function processRepos(app, repos, scopeComplete = true) {
     });
   }
 
-  // 本地克隆保留给下次运行复用，只清掉本轮不再出现的仓库
+  // 本地克隆保留给下次运行复用，只清掉不在本轮名单里的仓库
   const kept = new Set(jobs.map((job) => path.basename(job.repoPath)));
   if (fs.existsSync(tempDir)) {
     for (const dirent of fs.readdirSync(tempDir, { withFileTypes: true }).sort(

@@ -15,8 +15,8 @@ rate_limit_warn_threshold = 50
 # ---- 统计范围 ----
 [repos]
 # 统计范围以 GraphQL 查询为准：先问出哪些年份有贡献，再逐年按上下半年查
-# contributionsCollection，并成仓库清单。逐年查是为了覆盖全部历史，只看最近一年的
-# 口径会漏掉久未变动的仓库。口径按账号归属、只看默认分支，比主页贡献图窄一点。
+# contributionsCollection，并成仓库清单。逐年查才能覆盖全部历史，只查最近一年会漏掉
+# 久未变动的仓库。口径按账号归属、只看默认分支，比主页贡献图窄一点。
 # 查询完整时名单以本轮为准，查询不完整时与上轮合并、只增不减。
 # 必须用账号本人的令牌（EMAILS_TOKEN）：Actions 内置令牌查到的 viewer 是 bot 自己。
 # 名单整个重建就删掉 scripts/stats_cache/scope/index.json 再直接跑 generate_stats.js；

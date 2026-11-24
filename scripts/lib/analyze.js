@@ -44,7 +44,7 @@ export async function analyzeRepo(
   let isApiFallback = false;
   if (!commits.length) {
     if (repoPath) {
-      log.color("    ⚠️  git log 无数据，改用 API...", YELLOW);
+      log.color("    ⚠️  git log 无数据，转由 API 读取...", YELLOW);
     }
     commits = await getCommitsFromApi(app, owner, repoName, branch, log);
     isApiFallback = commits.length > 0;
