@@ -290,18 +290,15 @@ function snapshot() {
 test("摘要对比：无上次数据时说明暂无对比", () => {
   assert.equal(
     describeChanges(null, snapshot()),
-    "首次运行或上次汇总不可用，暂无对比数据",
+    "- 首次运行或上次汇总不可用，暂无对比数据",
   );
 });
 
 test("摘要对比：数据不变时明确说明", () => {
-  assert.equal(
-    describeChanges(snapshot(), snapshot()),
-    "较上一次运行，各项数据均无变化",
-  );
+  assert.equal(describeChanges(snapshot(), snapshot()), "- 各项数据均无变化");
   assert.equal(
     describeChanges(snapshot(), snapshot(), 2),
-    "较上一次运行，各项数据均无变化（2 份缓存恢复失败，对比可能不完整）",
+    "- 各项数据均无变化\n- 注意：2 份缓存恢复失败，对比可能不完整",
   );
 });
 
@@ -318,16 +315,15 @@ test("摘要对比：列出总量与仓库级变化", () => {
   after.repos["API-Detector.json"].deletions = 14;
   after.repos["API-Detector.json"].latest = after.latest_commit_timestamp;
 
-  const text = describeChanges(before, after);
-  assert.ok(
-    text.startsWith(
-      "较上一次运行：提交 +2，增删行 +45 / +4，图片 +1，最新提交更新至 2026-11-17T09:00:00+08:00",
-    ),
-  );
-  assert.ok(
-    text.includes(
-      "仓库变化：API-Detector（提交 +2，增删行 +45 / +4，最新提交时间更新）",
-    ),
+  // 一行一个维度：删除行与卡片、git diff 一样记负，不会两边都是加号
+  assert.equal(
+    describeChanges(before, after),
+    [
+      "- 提交 +2，新增 +45 行 / 删除 -4 行，图片 +1",
+      "- 最新提交：更新至 2026-11-17T09:00:00+08:00",
+      "- 仓库明细：",
+      "  - API-Detector：提交 +2，新增 +45 行 / 删除 -4 行，最新提交时间更新",
+    ].join("\n"),
   );
 });
 
@@ -345,9 +341,10 @@ test("摘要对比：新增与移除的仓库分别说明", () => {
     },
   };
 
-  const text = describeChanges(before, after);
-  assert.ok(text.includes("新增 New"));
-  assert.ok(text.includes("移除 Other"));
+  assert.equal(
+    describeChanges(before, after),
+    ["- 新增仓库：New", "- 移除仓库：Other"].join("\n"),
+  );
 });
 
 test("buildSummary 汇总目录并跳过损坏的缓存", () => {

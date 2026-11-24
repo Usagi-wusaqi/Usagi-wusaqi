@@ -559,10 +559,45 @@ function formatDelta(value) {
   return `${value > 0 ? "+" : value < 0 ? "-" : ""}${formatNumber(Math.abs(value))}`;
 }
 
+/** 明细文件名去掉 .json 就是仓库名。 */
+function repoLabel(name) {
+  return String(name).replace(/\.json$/, "");
+}
+
+/**
+ * 增删行的写法与卡片、git diff 一致：新增记正、删除记负。
+ *
+ * 两个数字都是「相对上一次运行的变化量」，把删除数取反再格式化，两边都读作
+ * 「本次多了多少行 / 少了多少行」，方向一眼能看出来。
+ */
+function formatLineDelta(additions, deletions) {
+  return `新增 ${formatDelta(additions)} 行 / 删除 ${formatDelta(-deletions)} 行`;
+}
+
+/** 单个仓库的变化，没变化时返回空串。 */
+function describeRepoChange(before, after) {
+  const parts = [];
+  if (after.commits !== before.commits) {
+    parts.push(`提交 ${formatDelta(after.commits - before.commits)}`);
+  }
+  const additions = after.additions - before.additions;
+  const deletions = after.deletions - before.deletions;
+  if (additions !== 0 || deletions !== 0) {
+    parts.push(formatLineDelta(additions, deletions));
+  }
+  if (after.images !== before.images) {
+    parts.push(`图片 ${formatDelta(after.images - before.images)}`);
+  }
+  if (after.latest !== before.latest) {
+    parts.push("最新提交时间更新");
+  }
+  return parts.join("，");
+}
+
 /** 对比两次运行的最终汇总，只读数字对象，不碰明细。 */
 function describeChanges(previous, current, failedRestore = 0) {
   if (!previous || !Object.keys(previous.repos).length) {
-    return "首次运行或上次汇总不可用，暂无对比数据";
+    return "- 首次运行或上次汇总不可用，暂无对比数据";
   }
 
   const commits = current.total_commits - previous.total_commits;
@@ -572,76 +607,51 @@ function describeChanges(previous, current, failedRestore = 0) {
   const added = Object.keys(current.repos).filter((name) => !previous.repos[name]);
   const removed = Object.keys(previous.repos).filter((name) => !current.repos[name]);
 
+  // 一行一个维度，摘要里按列表渲染，长名单也不会挤成一整段
+  const lines = [];
+  const totals = [];
+  if (commits !== 0) {
+    totals.push(`提交 ${formatDelta(commits)}`);
+  }
+  if (additions !== 0 || deletions !== 0) {
+    totals.push(formatLineDelta(additions, deletions));
+  }
+  if (images !== 0) {
+    totals.push(`图片 ${formatDelta(images)}`);
+  }
+  if (totals.length) {
+    lines.push(`- ${totals.join("，")}`);
+  }
+  if (previous.latest_commit_timestamp !== current.latest_commit_timestamp) {
+    lines.push(`- 最新提交：更新至 ${current.latest_commit_timestamp || "—"}`);
+  }
+  if (added.length) {
+    lines.push(`- 新增仓库：${added.map(repoLabel).join("、")}`);
+  }
+  if (removed.length) {
+    lines.push(`- 移除仓库：${removed.map(repoLabel).join("、")}`);
+  }
+
   const repoChanges = [];
   for (const name of Object.keys(current.repos)) {
     const before = previous.repos[name];
-    const after = current.repos[name];
     if (!before) {
       continue;
     }
-    const parts = [];
-    if (after.commits !== before.commits) {
-      parts.push(`提交 ${formatDelta(after.commits - before.commits)}`);
-    }
-    if (
-      after.additions !== before.additions ||
-      after.deletions !== before.deletions
-    ) {
-      parts.push(
-        `增删行 ${formatDelta(after.additions - before.additions)} / ${formatDelta(after.deletions - before.deletions)}`,
-      );
-    }
-    if (after.images !== before.images) {
-      parts.push(`图片 ${formatDelta(after.images - before.images)}`);
-    }
-    if (after.latest !== before.latest) {
-      parts.push("最新提交时间更新");
-    }
-    if (parts.length) {
-      repoChanges.push(`${name.replace(/\.json$/, "")}（${parts.join("，")}）`);
+    const text = describeRepoChange(before, current.repos[name]);
+    if (text) {
+      repoChanges.push(`${repoLabel(name)}：${text}`);
     }
   }
-
-  const latestChanged =
-    previous.latest_commit_timestamp !== current.latest_commit_timestamp;
-  const changed =
-    commits !== 0 ||
-    additions !== 0 ||
-    deletions !== 0 ||
-    images !== 0 ||
-    latestChanged ||
-    added.length ||
-    removed.length ||
-    repoChanges.length;
-
-  const caveat =
-    failedRestore > 0 ? `（${failedRestore} 份缓存恢复失败，对比可能不完整）` : "";
-  if (!changed) {
-    return `较上一次运行，各项数据均无变化${caveat}`;
+  if (repoChanges.length) {
+    // 明细挂在「仓库明细」下缩进一层，和上面的总量区分开
+    lines.push("- 仓库明细：", ...repoChanges.map((text) => `  - ${text}`));
   }
-
-  const parts = [];
-  if (commits !== 0) {
-    parts.push(`提交 ${formatDelta(commits)}`);
+  if (!lines.length) {
+    lines.push("- 各项数据均无变化");
   }
-  if (additions !== 0 || deletions !== 0) {
-    parts.push(`增删行 ${formatDelta(additions)} / ${formatDelta(deletions)}`);
-  }
-  if (images !== 0) {
-    parts.push(`图片 ${formatDelta(images)}`);
-  }
-  if (latestChanged) {
-    parts.push(`最新提交更新至 ${current.latest_commit_timestamp || "—"}`);
-  }
-  const lines = [`较上一次运行：${parts.join("，")}${caveat}`];
-
-  const repoParts = [
-    ...added.map((name) => `新增 ${name.replace(/\.json$/, "")}`),
-    ...removed.map((name) => `移除 ${name.replace(/\.json$/, "")}`),
-    ...repoChanges,
-  ];
-  if (repoParts.length) {
-    lines.push(`仓库变化：${repoParts.join("，")}`);
+  if (failedRestore > 0) {
+    lines.push(`- 注意：${failedRestore} 份缓存恢复失败，对比可能不完整`);
   }
   return lines.join("\n");
 }
