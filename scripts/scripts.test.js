@@ -6,8 +6,17 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  ApiError,
   App,
+  cleanStaleCache,
+  confirmIncludedRepos,
+  discoverRepos,
+  discoverScopeRepos,
   generateContributionsSvg,
+  getUpstreamRepo,
+  loadCache,
+  mergeRepos,
+  normalizeFullName,
   parseIsoTimestamp,
   parseToml,
   serializeCache,
@@ -35,6 +44,9 @@ test("TOML 子集解析覆盖实际用到的写法", () => {
   assert.equal(config.svg.layout.border_radius, 4.5);
   assert.equal(config.svg.font.family, "'Segoe UI', Ubuntu, Sans-Serif");
   assert.equal(config.behavior.concurrency, 6);
+  assert.equal(config.repos.discover, true);
+  assert.deepEqual(config.repos.include, []);
+  assert.deepEqual(config.repos.exclude, []);
   assert.deepEqual(config.behavior.image_extensions, [
     ".png",
     ".jpg",
@@ -64,10 +76,30 @@ test("TOML 解析忽略注释、支持引号内的 # 与转义", () => {
   assert.equal(parsed.section.flag, true);
 });
 
+test("TOML 数组可跨行书写，行尾注释与末尾逗号不影响解析", () => {
+  const parsed = parseToml(
+    [
+      "[repos]",
+      "include = [",
+      '  "o/a", # 甲',
+      "  'https://github.com/o/b.git',",
+      "]",
+      "exclude = []",
+      "",
+      "[svg]",
+      'custom_title = "t"',
+    ].join("\n"),
+  );
+  assert.deepEqual(parsed.repos.include, ["o/a", "https://github.com/o/b.git"]);
+  assert.deepEqual(parsed.repos.exclude, []);
+  assert.equal(parsed.svg.custom_title, "t");
+});
+
 test("TOML 非法内容会抛错，由调用方回退默认配置", () => {
   assert.throws(() => parseToml("[api\nbase = 1"));
   assert.throws(() => parseToml("base"));
   assert.throws(() => parseToml('base = "unclosed'));
+  assert.throws(() => parseToml('arr = [\n  "a",\n'));
 });
 
 test("卡片 SVG 的列位置与指标格式", () => {
@@ -114,7 +146,7 @@ test("没有自定义标题时按账号生成标题", () => {
   assert.ok(plural.includes("usagis&apos; Code Contributions"));
 });
 
-test("缓存序列化可往返：结构一致且提交顺序不乱", () => {
+test("缓存序列化可往返，metadata 与仓库分组原样读回", () => {
   const metadata = {
     total_commits: 2,
     total_additions: 100,
@@ -355,6 +387,368 @@ function summaryFixture() {
     },
   };
 }
+
+/** 造一条只含统计所需字段的仓库记录。 */
+function repoOf(full, extra = {}) {
+  const [owner, name] = full.split("/");
+  const repo = { name, full_name: full, html_url: `https://github.com/${full}`, fork: false };
+  return { ...repo, ...extra };
+}
+
+test("仓库名归一化：接受 owner/name、完整地址与 .git 后缀", () => {
+  assert.equal(normalizeFullName("o/r"), "o/r");
+  assert.equal(normalizeFullName("https://github.com/o/r.git"), "o/r");
+  assert.equal(normalizeFullName("  github.com/o/r/  "), "o/r");
+  assert.equal(normalizeFullName("r"), "");
+  assert.equal(normalizeFullName(""), "");
+  assert.equal(normalizeFullName(undefined), "");
+});
+
+test("统计范围只留公开仓库：私有仓库即使出现在发现结果里也剔除", () => {
+  const { repos } = mergeRepos(
+    [repoOf("me/public"), repoOf("me/secret", { private: true })],
+    ["me/other"],
+  );
+  assert.deepEqual(repos.map((repo) => repo.full_name), ["me/other", "me/public"]);
+});
+
+test("统计范围合并：清单在前、按名去重、排除名单生效", () => {
+  const { repos, added, excluded } = mergeRepos(
+    [
+      repoOf("me/mine", { fork: true }),
+      repoOf("org/kept"),
+      repoOf("org/dropped"),
+      repoOf("ORG/KEPT"),
+    ],
+    ["https://github.com/org/extra.git", "缺归属"],
+    ["org/dropped"],
+  );
+
+  assert.deepEqual(
+    repos.map((repo) => repo.full_name),
+    ["org/extra", "me/mine", "org/kept"],
+  );
+  assert.deepEqual(added, { included: 1, discovered: 2 });
+  assert.equal(excluded, 1);
+  // 清单里只有名字，fork 关系未知，交由上游解析查详情
+  assert.equal("fork" in repos[0], false);
+  assert.equal(repos[0].html_url, "https://github.com/org/extra");
+});
+
+/** 造一份 GraphQL 贡献清单响应；不传 pageInfo 就是最后一页。 */
+const contributedPage = (nodes, pageInfo = {}) => ({
+  viewer: {
+    login: "me",
+    repositoriesContributedTo: {
+      totalCount: nodes.length,
+      pageInfo: { hasNextPage: false, endCursor: null, ...pageInfo },
+      nodes,
+    },
+  },
+});
+
+const contributionNode = (full, extra = {}) => {
+  const [owner, name] = full.split("/");
+  return {
+    nameWithOwner: `${owner}/${name}`,
+    isPrivate: false,
+    isFork: false,
+    parent: null,
+    ...extra,
+  };
+};
+
+test("贡献清单按页收集仓库，跨页去重并在末页停止", async () => {
+  const app = new App("me", "token");
+  app.api.max_api_pages = 5;
+
+  const pages = [
+    contributedPage(
+      [
+        contributionNode("org/one", { databaseId: 1001 }),
+        contributionNode("me/fork", {
+          isFork: true,
+          parent: { nameWithOwner: "up/real" },
+        }),
+      ],
+      { hasNextPage: true, endCursor: "c1" },
+    ),
+    contributedPage(
+      [contributionNode("me/fork", { isFork: true }), contributionNode("org/two")],
+      { hasNextPage: false, endCursor: "c2" },
+    ),
+  ];
+
+  const cursors = [];
+  const found = await discoverRepos(app, async (instance, query, variables) => {
+    // 一次查询直接拿仓库清单，不再搜提交
+    assert.match(query, /repositoriesContributedTo/);
+    assert.match(query, /contributionTypes: \[COMMIT\]/);
+    assert.match(query, /includeUserRepositories: true/);
+    assert.match(query, /databaseId/);
+    cursors.push(variables.cursor);
+    return pages[cursors.length - 1];
+  });
+
+  assert.deepEqual(cursors, [null, "c1"]);
+  assert.deepEqual(
+    found.repos.map((repo) => repo.full_name),
+    ["org/one", "me/fork", "org/two"],
+  );
+  assert.equal(found.complete, true);
+  assert.equal(found.repos[0].id, 1001);
+
+  // fork 与上游直接由查询带回来，解析克隆目标时不必再查一次详情
+  const fork = found.repos.find((repo) => repo.full_name === "me/fork");
+  assert.equal(fork.fork, true);
+  const [owner, name, unknown] = await getUpstreamRepo(app, fork, async () => {
+    throw new Error("不该再请求详情");
+  });
+  assert.deepEqual([owner, name], ["up", "real"]);
+  assert.equal(unknown, false);
+});
+
+test("贡献清单查询失败时返回空名单并标记结果不完整", async () => {
+  const app = new App("me", "token");
+  const found = await discoverRepos(app, async () => {
+    throw new ApiError("rate_limit", "GitHub GraphQL 配额耗尽");
+  });
+  assert.deepEqual(found.repos, []);
+  assert.equal(found.complete, false);
+});
+
+test("贡献清单翻到页数上限还没到底时标记结果不完整", async () => {
+  const app = new App("me", "token");
+  app.api.max_api_pages = 2;
+
+  let calls = 0;
+  const found = await discoverRepos(app, async () => {
+    calls += 1;
+    return contributedPage([contributionNode(`org/r${calls}`)], {
+      hasNextPage: true,
+      endCursor: `c${calls}`,
+    });
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(found.complete, false);
+  assert.deepEqual(
+    found.repos.map((repo) => repo.full_name),
+    ["org/r1", "org/r2"],
+  );
+});
+
+test("令牌不是本人时整轮放弃，不拿 bot 的空名单覆盖缓存", async () => {
+  const app = new App("me", "token");
+
+  let calls = 0;
+  const found = await discoverRepos(app, async () => {
+    calls += 1;
+    return { viewer: { login: "github-actions[bot]", repositoriesContributedTo: null } };
+  });
+
+  // 登录名不符就不该继续翻页
+  assert.equal(calls, 1);
+  assert.deepEqual(found.repos, []);
+  assert.equal(found.complete, false);
+});
+
+test("贡献清单里的私有仓库直接跳过", async () => {
+  const app = new App("me", "token");
+
+  const found = await discoverRepos(app, async () =>
+    contributedPage([
+      contributionNode("org/pub"),
+      contributionNode("org/priv", { isPrivate: true }),
+    ]),
+  );
+
+  assert.deepEqual(
+    found.repos.map((repo) => repo.full_name),
+    ["org/pub"],
+  );
+  assert.deepEqual(found.privateRepos, ["org/priv"]);
+  assert.equal(found.complete, true);
+});
+
+test("查询完整时名单以本轮为准，不完整时与上轮合并只增不减", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "usagi-scope-"));
+  try {
+    const app = new App("me", "token");
+    app.cacheDir = dir;
+    const file = path.join(dir, "scope", "index.json");
+
+    const first = await discoverScopeRepos(app, async () =>
+      contributedPage([
+        contributionNode("org/keep", { databaseId: 1001 }),
+        contributionNode("org/gone"),
+      ]),
+    );
+    assert.deepEqual(
+      first.repos.map((repo) => repo.full_name),
+      ["org/keep", "org/gone"],
+    );
+
+    // 第二轮完整：org/gone 已被删除或失去访问权，它自然退出名单
+    const second = await discoverScopeRepos(app, async () =>
+      contributedPage([contributionNode("org/keep", { databaseId: 1001 })]),
+    );
+    assert.equal(second.complete, true);
+    assert.deepEqual(
+      second.repos.map((repo) => repo.full_name),
+      ["org/keep"],
+    );
+
+    // 第三轮查询失败：名单退回缓存，已统计的仓库不会掉队
+    const third = await discoverScopeRepos(app, async () => {
+      throw new ApiError("failure", "HTTP 502: Bad Gateway");
+    });
+    assert.equal(third.complete, false);
+    assert.deepEqual(
+      third.repos.map((repo) => repo.full_name),
+      ["org/keep"],
+    );
+
+    const saved = JSON.parse(fs.readFileSync(file, "utf8"));
+    // 仓库 ID 一并落盘：改名后缓存靠它接续，不会被当成新仓库重算
+    assert.deepEqual(saved.repos, [{ full_name: "org/keep", id: 1001 }]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("转私有的仓库从名单里立刻退出", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "usagi-scope-"));
+  try {
+    const app = new App("me", "token");
+    app.cacheDir = dir;
+
+    await discoverScopeRepos(app, async () =>
+      contributedPage([contributionNode("org/one")]),
+    );
+
+    const second = await discoverScopeRepos(app, async () =>
+      contributedPage([contributionNode("org/one", { isPrivate: true })]),
+    );
+
+    assert.deepEqual(second.repos, []);
+    assert.deepEqual(second.privateRepos, ["org/one"]);
+    const saved = JSON.parse(
+      fs.readFileSync(path.join(dir, "scope", "index.json"), "utf8"),
+    );
+    assert.deepEqual(saved.repos, []);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("显式清单也校验：私有与 404 剔除，网络抖动时按原样保留", async () => {
+  const app = new App("me", "token");
+  const kept = await confirmIncludedRepos(
+    app,
+    [
+      "org/pub",
+      "org/priv",
+      "https://github.com/org/missing.git",
+      "org/flaky",
+    ],
+    async (instance, url) => {
+      if (url.endsWith("/org/priv")) {
+        return { full_name: "org/priv", private: true };
+      }
+      if (url.endsWith("/org/missing")) {
+        throw new ApiError("failure", "HTTP 404: Not Found");
+      }
+      if (url.endsWith("/org/flaky")) {
+        throw new ApiError("failure", "HTTP 502: Bad Gateway");
+      }
+      return { full_name: "org/pub", private: false };
+    },
+  );
+
+  assert.deepEqual(
+    kept.map((repo) => repo.full_name),
+    ["org/pub", "org/flaky"],
+  );
+  // 读到详情的带上详情，读不到（502）的退回只有名字的最小记录
+  assert.equal(kept[0].private, false);
+  assert.equal(kept[1].fork, undefined);
+});
+
+test("清单里的仓库读到详情后，解析克隆目标时不再重复查一次", async () => {
+  const app = new App("me", "token");
+  let calls = 0;
+  const included = await confirmIncludedRepos(app, ["org/mirror"], async () => {
+    calls += 1;
+    return {
+      id: 9,
+      name: "mirror",
+      full_name: "org/mirror",
+      html_url: "https://github.com/org/mirror",
+      fork: true,
+      parent: { owner: { login: "up" }, name: "real" },
+    };
+  });
+  assert.equal(calls, 1);
+
+  const { repos } = mergeRepos([], included, []);
+  assert.equal(repos[0].full_name, "org/mirror");
+
+  let extra = 0;
+  const [owner, name, unknown] = await getUpstreamRepo(app, repos[0], async () => {
+    extra += 1;
+    throw new Error("不该再请求详情");
+  });
+  assert.deepEqual([owner, name], ["up", "real"]);
+  assert.equal(unknown, false);
+  assert.equal(extra, 0);
+});
+
+
+
+test("上游详情读不到时不算作独立仓库，交由调用方跳过", async () => {
+  const app = new App("me", "token");
+  const [owner, name, unknown] = await getUpstreamRepo(
+    app,
+    { name: "r", full_name: "org/r", html_url: "https://github.com/org/r" },
+    async () => {
+      throw new ApiError("failure", "HTTP 500");
+    },
+  );
+  assert.deepEqual([owner, name], [null, null]);
+  assert.equal(unknown, true);
+});
+
+
+test("清单里未标 fork 的仓库会查详情换算上游，明确的非 fork 不查", async () => {
+  const app = new App("me", "token");
+  const includeRepo = {
+    name: "r",
+    full_name: "org/r",
+    html_url: "https://github.com/org/r",
+  };
+  let called = 0;
+  const [owner, name] = await getUpstreamRepo(app, includeRepo, async (instance, url) => {
+    called += 1;
+    assert.equal(url, "https://api.github.com/repos/org/r");
+    return { fork: true, parent: { owner: { login: "up" }, name: "r" } };
+  });
+  assert.deepEqual([owner, name], ["up", "r"]);
+  assert.equal(called, 1);
+
+  // 发现结果里明确标了非 fork，不再多查一次
+  const [o2, n2] = await getUpstreamRepo(
+    app,
+    { fork: false, name: "r", full_name: "org/r" },
+    async () => {
+      called += 1;
+      return {};
+    },
+  );
+  assert.deepEqual([o2, n2], [null, null]);
+  assert.equal(called, 1);
+});
+
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 

@@ -48,7 +48,7 @@ jobs:
       - name: 配置 Pages
         uses: actions/configure-pages@v5
 
-      # 确定目标用户：上游仓库由统计脚本从各仓库的 source/parent 字段自行解析，
+      # 确定目标用户：上游仓库与额外发现的仓库都由统计脚本自行解析，
       # 这里只需给出账号名，不必再查一次仓库元数据
       - name: 确定目标用户
         id: determine-users

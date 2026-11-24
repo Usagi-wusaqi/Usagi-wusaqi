@@ -7,7 +7,9 @@
  *
  * 环境变量：
  *     GH_TOKEN            GitHub 令牌（必需）
- *     EMAILS_TOKEN        账号邮箱令牌（必需，权限 user:email）
+ *     EMAILS_TOKEN        账号本人令牌（必需，权限 user:email；自动发现仓库也用它，
+ *                         因为 GraphQL 查的是「令牌持有者的贡献」，换成 Actions 内置
+ *                         令牌就变成查 bot 自己了）
  *     ORIGIN_USERNAME     统计目标用户名（缺省时从 README.md 读取）
  *
  * 实现要点：
@@ -188,6 +190,12 @@ const API_DEFAULTS = {
   rate_limit_warn_threshold: 50,
 };
 
+const REPOS_DEFAULTS = {
+  discover: true,
+  include: [],
+  exclude: [],
+};
+
 const BEHAVIOR_DEFAULTS = {
   separator_length: DEFAULT_SEPARATOR_LENGTH,
   image_extensions: [
@@ -361,18 +369,47 @@ function parseToml(text) {
     return node;
   };
 
-  text.split(/\r?\n/).forEach((raw, index) => {
+  /** 括号是否已经配平到数组结尾，用于判断跨行数组何时结束。 */
+  const arrayClosed = (raw) => {
+    let depth = 0;
+    let quote = null;
+    for (let i = 0; i < raw.length; i += 1) {
+      const ch = raw[i];
+      if (quote) {
+        if (ch === "\\" && quote === '"') {
+          i += 1;
+        } else if (ch === quote) {
+          quote = null;
+        }
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        quote = ch;
+      } else if (ch === "[") {
+        depth += 1;
+      } else if (ch === "]") {
+        depth -= 1;
+        if (depth === 0) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  const lines = text.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
     const lineNo = index + 1;
-    const line = stripComment(raw).trim();
+    const line = stripComment(lines[index]).trim();
     if (!line) {
-      return;
+      continue;
     }
     if (line.startsWith("[")) {
       if (!line.endsWith("]")) {
         throw new Error(`第 ${lineNo} 行：表头未闭合`);
       }
       table = descend(line.slice(1, -1), lineNo);
-      return;
+      continue;
     }
     const eq = line.indexOf("=");
     if (eq < 0) {
@@ -382,8 +419,24 @@ function parseToml(text) {
     if (!key) {
       throw new Error(`第 ${lineNo} 行：键名为空`);
     }
-    table[key] = parseValue(line.slice(eq + 1), lineNo);
-  });
+    let valueText = line.slice(eq + 1);
+    // 数组允许换行书写，逐行拼接直到括号配平；行内注释照常剥离
+    if (valueText.trim().startsWith("[") && !arrayClosed(valueText)) {
+      let closed = false;
+      while (index + 1 < lines.length) {
+        index += 1;
+        valueText += ` ${stripComment(lines[index]).trim()}`;
+        if (arrayClosed(valueText)) {
+          closed = true;
+          break;
+        }
+      }
+      if (!closed) {
+        throw new Error(`第 ${lineNo} 行：数组未闭合`);
+      }
+    }
+    table[key] = parseValue(valueText, lineNo);
+  }
 
   return root;
 }
@@ -401,6 +454,14 @@ class App {
     const raw = this.loadRawConfig();
     this.api = merged(raw.api, API_DEFAULTS);
     this.behavior = merged(raw.behavior, BEHAVIOR_DEFAULTS);
+
+    // 统计范围：要不要自动查询「有自己提交的仓库」；关掉后只剩 include 清单
+    this.repos = merged(raw.repos, REPOS_DEFAULTS);
+    this.repos.discover = Boolean(this.repos.discover);
+    const asRepoList = (value) =>
+      Array.isArray(value) ? value.map((item) => String(item)) : [];
+    this.repos.include = asRepoList(this.repos.include);
+    this.repos.exclude = asRepoList(this.repos.exclude);
 
     const svgRaw = { ...(raw.svg ?? {}) };
     this.svg = merged(svgRaw, SVG_DEFAULTS);
@@ -568,8 +629,69 @@ async function apiJson(app, url, token = null) {
   }
 }
 
+/**
+ * 发一条 GraphQL 查询，返回响应里的 `data`。
+ *
+ * GraphQL 出错也回 200，错误藏在 `body.errors` 里，只看状态码会把失败当成功；
+ * 配额耗尽则沿用 REST 那套判断（403/429 且剩余额度为 0）。
+ */
+async function graphqlJson(app, query, variables = {}, token = null) {
+  const auth = token === null ? app.token : token;
+  if (!auth) {
+    throw new ApiError("failure", "缺少令牌，无法查询 GraphQL");
+  }
+
+  let response;
+  let raw;
+  try {
+    response = await fetch(`${app.api.github_api_base}/graphql`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "generate-stats",
+        Authorization: `bearer ${auth}`,
+      },
+      body: JSON.stringify({ query, variables }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    raw = await response.text();
+  } catch {
+    printColor("❌ 网络请求失败", RED);
+    throw new ApiError("failure");
+  }
+
+  let body = null;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    body = null;
+  }
+
+  if (response.status === 403 || response.status === 429) {
+    const left = Number.parseInt(
+      response.headers.get("x-ratelimit-remaining") ?? "",
+      10,
+    );
+    if (!Number.isFinite(left) || left === 0 || response.status === 429) {
+      throw new ApiError("rate_limit", "GitHub GraphQL 配额耗尽");
+    }
+  }
+  if (!response.ok) {
+    const detail = body?.message ? `: ${body.message}` : "";
+    throw new ApiError("failure", `HTTP ${response.status}${detail}`);
+  }
+  if (Array.isArray(body?.errors) && body.errors.length) {
+    throw new ApiError(
+      "failure",
+      String(body.errors[0]?.message || "GraphQL 查询失败"),
+    );
+  }
+  return body?.data ?? null;
+}
+
 // ============================================================================
-// GitHub 仓库列表 / 上游 / 邮箱收集
+// GitHub 上游 / 邮箱收集
 // ============================================================================
 
 function repoOwnerFromUrl(repoUrl) {
@@ -581,37 +703,12 @@ function repoOwnerFromUrl(repoUrl) {
   return bare ? bare[1] : null;
 }
 
-async function getRepos(app) {
-  printColor("📡 获取仓库列表...", YELLOW);
-  const repos = [];
-  const base = app.api.github_api_base;
-  const perPage = intOf(app.api.per_page, 100);
-  const maxPages = intOf(app.api.max_api_pages, 10);
-
-  for (let page = 1; page <= maxPages; page += 1) {
-    const url = `${base}/users/${app.originUsername}/repos?per_page=${perPage}&type=all&page=${page}`;
-    let data;
-    try {
-      data = await apiJson(app, url);
-    } catch (exc) {
-      if (exc instanceof ApiError && exc.kind === "rate_limit") {
-        throw exc;
-      }
-      printColor("❌ 获取仓库列表失败", RED);
-      return repos;
-    }
-    if (!Array.isArray(data) || !data.length) {
-      break;
-    }
-    repos.push(...data);
-    printColor(`    第 ${page} 页：${data.length} 个`, NC);
-    if (data.length < perPage) {
-      break;
-    }
-  }
-
-  printColor(`✅ 共 ${repos.length} 个仓库`, GREEN);
-  return repos;
+/**
+ * 接口每页最多回 100 条，配置写大也只回 100。逐个钳制，否则拿配置值判断
+ * 「这一页排满没」会把「还有下一页」误判成「到底了」，列表悄悄少一截。
+ */
+function apiPerPage(app) {
+  return Math.min(Math.max(intOf(app.api.per_page, 100), 1), 100);
 }
 
 function upstreamOf(repo) {
@@ -624,40 +721,476 @@ function upstreamOf(repo) {
   return null;
 }
 
-async function getUpstreamRepo(app, repo) {
-  if (!repo?.fork) {
-    return [null, null];
+/**
+ * 解析 fork 的上游，返回 `[owner, name, unknown]`。
+ *
+ * `unknown` 为真表示没能确认 fork 关系（配额耗尽、网络失败、详情读不到）。
+ * 这时不能把它当独立仓库克隆，否则可能和上游重复计数，由调用方本轮跳过。
+ */
+async function getUpstreamRepo(app, repo, request = apiJson) {
+  // fork 字段明确为 false 才跳过；未知时（清单里的仓库）仍要查一次详情，
+  // 否则 fork 会被当成独立仓库、与上游重复统计
+  if (repo?.fork === false) {
+    return [null, null, false];
   }
 
   let upstream = upstreamOf(repo);
   if (upstream === null) {
     const name = repo.name;
     if (!name) {
-      return [null, null];
+      return [null, null, false];
     }
-    const url = `${app.api.github_api_base}/repos/${app.originUsername}/${name}`;
+    // 按仓库自己的归属去查，贡献清单里的仓库未必属于本账号
+    const path = repo.full_name || `${app.originUsername}/${name}`;
+    const url = `${app.api.github_api_base}/repos/${path}`;
     let detail;
     try {
-      detail = await apiJson(app, url);
-    } catch (exc) {
-      if (exc instanceof ApiError && exc.kind === "rate_limit") {
-        app.setRateLimit(exc.message);
-      }
-      return [null, null];
+      detail = await request(app, url);
+    } catch {
+      return [null, null, true];
     }
-    if (detail && typeof detail === "object" && !Array.isArray(detail)) {
-      upstream = upstreamOf(detail);
+    if (!detail || typeof detail !== "object" || Array.isArray(detail)) {
+      return [null, null, true];
     }
+    upstream = upstreamOf(detail);
   }
 
   if (upstream && typeof upstream === "object") {
     const owner = (upstream.owner ?? {}).login;
     const name = upstream.name;
     if (owner && name) {
-      return [owner, name];
+      return [owner, name, false];
     }
   }
-  return [null, null];
+  return [null, null, false];
+}
+
+/**
+ * 把 `owner/name`、完整地址或带 .git 的地址统一成 `owner/name`；不合法返回空串。
+ */
+function normalizeFullName(value) {
+  const text = String(value ?? "")
+    .trim()
+    .replace(/^(?:https?:\/\/)?(?:www\.)?github\.com\//i, "")
+    .replace(/\.git$/i, "")
+    .replace(/^\/+|\/+$/g, "");
+  const match = /^([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/.exec(text);
+  return match ? `${match[1]}/${match[2]}` : "";
+}
+
+/** 仓库在整轮统计里的唯一标识，用于去重与排除；大小写不敏感。 */
+function repoKeyOf(repo) {
+  const full = normalizeFullName(repo?.full_name);
+  if (full) {
+    return full.toLowerCase();
+  }
+  const owner = repoOwnerFromUrl(String(repo?.html_url ?? ""));
+  const name = String(repo?.name ?? "").trim();
+  return owner && name ? `${owner}/${name}`.toLowerCase() : "";
+}
+
+/**
+ * 由 `owner/name` 造一份最小仓库记录；fork 关系未知，留待解析上游时查详情。
+ */
+function repoFromFullName(full, id = undefined) {
+  const normalized = normalizeFullName(full);
+  if (!normalized) {
+    return null;
+  }
+  const [owner, name] = normalized.split("/");
+  const repo = {
+    name,
+    full_name: `${owner}/${name}`,
+    html_url: `https://github.com/${owner}/${name}`,
+  };
+  if (id !== undefined && id !== null) {
+    repo.id = id;
+  }
+  return repo;
+}
+
+/**
+ * 把 GraphQL 返回的仓库节点变成仓库记录。
+ *
+ * `fork` 与 `parent` 直接照 REST 详情的形状填上，后面解析克隆目标时
+ * `upstreamOf()` 能直接命中，省掉每个仓库一次详情请求。`databaseId` 与 REST
+ * 的 `id` 是同一个值，仓库改名后缓存靠它接续，不会被当成新仓库重算。
+ */
+function repoFromGraphqlNode(node) {
+  const full = normalizeFullName(node?.nameWithOwner);
+  if (!full) {
+    return null;
+  }
+  const [owner, name] = full.split("/");
+  const repo = {
+    name,
+    full_name: full,
+    html_url: `https://github.com/${full}`,
+    private: node?.isPrivate === true,
+    fork: node?.isFork === true,
+  };
+  if (node?.databaseId !== null && node?.databaseId !== undefined) {
+    repo.id = node.databaseId;
+  }
+  const parentFull = normalizeFullName(node?.parent?.nameWithOwner);
+  if (repo.fork && parentFull) {
+    const [parentOwner, parentName] = parentFull.split("/");
+    repo.parent = { name: parentName, owner: { login: parentOwner } };
+  }
+  return repo;
+}
+
+/** 贡献清单用的查询：按仓库分组，一页 100 个，游标翻页。 */
+const CONTRIBUTED_REPOS_QUERY = `
+query ($cursor: String) {
+  viewer {
+    login
+    repositoriesContributedTo(
+      first: 100
+      after: $cursor
+      includeUserRepositories: true
+      contributionTypes: [COMMIT]
+      orderBy: { field: NAME, direction: ASC }
+    ) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        nameWithOwner
+        isPrivate
+        isFork
+        databaseId
+        parent { nameWithOwner }
+      }
+    }
+  }
+}`;
+
+/**
+ * 用 GraphQL 的 `repositoriesContributedTo` 列出「有自己提交的仓库」。
+ *
+ * 主页贡献图的口径就是它：按账号归属统计默认分支（含 gh-pages）上的提交，
+ * 直接给出仓库清单，不用先搜提交再反查仓库。名单覆盖全部历史，没有时间窗，
+ * 单页 100 个、游标翻页即可拿全，返回的每个仓库还带着 fork 与上游关系。
+ *
+ * 令牌必须是账号本人的：Actions 内置令牌的身份是 bot，查到的 viewer 是它自己。
+ * 因此拿到的登录名与统计目标不符时整轮放弃，免得把空名单当成「没有贡献的仓库」
+ * 去覆盖缓存。
+ */
+async function discoverRepos(app, request = null) {
+  // 默认走账号邮箱令牌（本人的 PAT）；测试可以注入一个假实现
+  const ask =
+    request ??
+    ((instance, query, variables) =>
+      graphqlJson(
+        instance,
+        query,
+        variables,
+        instance.emailsToken || instance.token,
+      ));
+  const maxPages = Math.max(intOf(app.api.max_api_pages, 10), 1);
+  const found = new Map();
+  // 私有仓库不进统计（卡片只算公开仓库），记下来只为日志和清缓存
+  const privateRepos = new Map();
+  let complete = true;
+  let cursor = null;
+
+  for (let page = 0; page < maxPages; page += 1) {
+    let data;
+    try {
+      data = await ask(app, CONTRIBUTED_REPOS_QUERY, { cursor });
+    } catch (exc) {
+      // 配额用完或接口出错：已找到的照常并进名单，本轮标记为不完整，
+      // 调用方据此保留旧缓存，不会把历史名单清掉
+      const limited = exc instanceof ApiError && exc.kind === "rate_limit";
+      printColor(
+        limited
+          ? "⚠️  GraphQL 配额用完，本轮只覆盖到已找到的仓库"
+          : `⚠️  贡献仓库查询中断，仅统计已找到的仓库: ${exc?.message || "请求失败"}`,
+        YELLOW,
+      );
+      complete = false;
+      break;
+    }
+
+    const viewer = data?.viewer;
+    if (!viewer) {
+      printColor("⚠️  贡献仓库查询没有返回 viewer，本轮跳过自动发现", YELLOW);
+      complete = false;
+      break;
+    }
+    if (
+      page === 0 &&
+      String(viewer.login ?? "").toLowerCase() !==
+        String(app.originUsername ?? "").toLowerCase()
+    ) {
+      printColor(
+        `⚠️  查询所用令牌属于 ${viewer.login || "未知账号"}，与统计目标 ` +
+          `${app.originUsername} 不一致，本轮跳过自动发现`,
+        YELLOW,
+      );
+      return { repos: [], privateRepos: [], complete: false };
+    }
+
+    const collection = viewer.repositoriesContributedTo;
+    const nodes = Array.isArray(collection?.nodes) ? collection.nodes : [];
+    for (const node of nodes) {
+      const repo = repoFromGraphqlNode(node);
+      if (!repo) {
+        continue;
+      }
+      const key = repoKeyOf(repo);
+      if (repo.private) {
+        if (!privateRepos.has(key)) {
+          privateRepos.set(key, repo.full_name);
+        }
+      } else if (!found.has(key)) {
+        found.set(key, repo);
+      }
+    }
+
+    if (!collection?.pageInfo?.hasNextPage) {
+      break;
+    }
+    cursor = collection.pageInfo.endCursor ?? null;
+    if (!cursor) {
+      complete = false;
+      break;
+    }
+    if (page === maxPages - 1) {
+      // 翻到配置的页数上限还没到底：名单只并已找到的部分
+      complete = false;
+      printColor(
+        `⚠️  贡献仓库超过 ${maxPages} 页（${maxPages * 100} 个），只覆盖到前面部分`,
+        YELLOW,
+      );
+    }
+  }
+
+  return {
+    repos: [...found.values()],
+    privateRepos: [...privateRepos.values()],
+    complete,
+  };
+}
+
+/** 发现结果的落盘位置：放缓存目录的子目录，不会被按仓库名清理的 .json 扫到。 */
+function scopeCacheFile(app) {
+  return path.join(app.cacheDir, "scope", "index.json");
+}
+
+/** 读回上次的发现结果；文件缺失或损坏时返回 null，视为还没有名单。 */
+function loadScopeCache(app) {
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(scopeCacheFile(app), "utf8"));
+  } catch {
+    return null;
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  const repos = [];
+  for (const item of Array.isArray(raw.repos) ? raw.repos : []) {
+    const repo = repoFromFullName(item?.full_name, item?.id);
+    if (repo) {
+      repos.push(repo);
+    }
+  }
+  return { repos };
+}
+
+function saveScopeCache(app, payload) {
+  const file = scopeCacheFile(app);
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  } catch (exc) {
+    printColor(`⚠️  统计范围缓存写入失败: ${exc.message}`, YELLOW);
+  }
+}
+
+/** 合并两份仓库清单，按全名去重，先出现的优先。 */
+function mergeRepoLists(first, second) {
+  const seen = new Set();
+  const out = [];
+  for (const repo of [...first, ...second]) {
+    const key = repoKeyOf(repo);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    out.push(repo);
+  }
+  return out;
+}
+
+/**
+ * 落盘本轮统计范围：查询完整时以本轮为准，仓库删除、转私有、失去访问权都会
+ * 自然退出名单；查询不完整（配额用完、翻页中断）时与上一轮合并，只增不减，
+ * 已知仓库不会因为一次失败就掉队。
+ *
+ * 名单本身仍是缓存的意义所在：查询彻底失败时下一轮还能拿它兜底，站点上的
+ * scope.json 也从这里来。私有仓库不进统计，两种情况都从名单里摘掉。
+ */
+async function discoverScopeRepos(app, request = null) {
+  const cached = loadScopeCache(app);
+  const found = await discoverRepos(app, request);
+
+  const privateKeys = new Set(
+    found.privateRepos.map((full) => full.toLowerCase()),
+  );
+  const repos = (
+    found.complete
+      ? found.repos
+      : mergeRepoLists(cached?.repos ?? [], found.repos)
+  ).filter((repo) => !privateKeys.has(repoKeyOf(repo)));
+
+  saveScopeCache(app, {
+    version: 2,
+    updated_at: nowIsoUtc(),
+    repos: repos.map((repo) => ({
+      full_name: repo.full_name,
+      ...(repo.id !== undefined ? { id: repo.id } : {}),
+    })),
+  });
+
+  return {
+    repos,
+    privateRepos: found.privateRepos,
+    complete: found.complete,
+    fresh: found.repos.length,
+  };
+}
+
+/**
+ * 确认显式清单里的仓库是否可用：私有、不存在或无权访问的剔除，其余读取失败时
+ * 按原样保留。
+ *
+ * 清单是用户手写的补漏手段，网络抖动或配额不足不该让它凭空消失，因此只有
+ * 明确失败的才剔除——私有用详情里的标记判断，删除或无权访问则只回 404。
+ * 返回仓库记录列表：读到详情的直接带上 `fork` 与上游关系，后面解析克隆目标时
+ * 不必再查一次；读不到详情的退回只有名字的最小记录。
+ */
+async function confirmIncludedRepos(app, include, request = apiJson) {
+  const list = [];
+  for (const item of Array.isArray(include) ? include : []) {
+    const repo = repoFromFullName(item);
+    if (repo) {
+      list.push(repo);
+    } else {
+      // 写成 owner/name 以外的形式（比如带 /tree/main 的页面地址）会被静默丢掉，
+      // 这里明确提示一句，免得清单看起来配了却没生效
+      printColor(`  ⚠️  清单项无法识别，已忽略: ${item}`, YELLOW);
+    }
+  }
+  if (!list.length) {
+    return [];
+  }
+
+  const base = app.api.github_api_base;
+  const limit = Math.max(
+    Math.min(intOf(app.behavior.concurrency, DEFAULT_CONCURRENCY), 4),
+    1,
+  );
+  let rateLimited = false;
+  const results = await mapPool(list, limit, async (repo) => {
+    const full = repo.full_name;
+    const fallback = { status: "kept", full, repo };
+    if (rateLimited) {
+      return fallback;
+    }
+    try {
+      const detail = await request(app, `${base}/repos/${full}`);
+      if (!detail || typeof detail !== "object" || Array.isArray(detail)) {
+        return fallback;
+      }
+      if (detail.private) {
+        return { status: "private", full };
+      }
+      // 详情里带着 fork 与上游关系，传下去就能省掉解析克隆目标时的一次请求
+      return { status: "ok", full, repo: detail };
+    } catch (exc) {
+      if (exc instanceof ApiError && exc.kind === "rate_limit") {
+        rateLimited = true;
+        return fallback;
+      }
+      // 404 是删除或无权访问，与自动发现同口径剔除；5xx、超时等保留
+      if (exc instanceof ApiError && /^HTTP 404\b/.test(exc.message)) {
+        return { status: "missing", full };
+      }
+      return fallback;
+    }
+  });
+
+  const kept = [];
+  for (const item of results) {
+    if (item.status === "private") {
+      printColor(`  ⊘ 跳过 ${item.full}（清单中的私有仓库）`, YELLOW);
+      continue;
+    }
+    if (item.status === "missing") {
+      printColor(`  ⊘ 移除 ${item.full}（清单中的仓库不存在或无权访问）`, YELLOW);
+      continue;
+    }
+    kept.push(item.repo);
+  }
+  if (rateLimited) {
+    printColor("  ⚠️  配额不足，清单中的仓库按原样纳入", YELLOW);
+  }
+  return kept;
+}
+
+/**
+ * 合并统计范围：额外的 `include` 清单在前，自动发现的仓库在后。
+ *
+ * 名字相同的仓库只保留最先出现的那条，排除名单按 `owner/name` 精确匹配。
+ */
+function mergeRepos(discovered = [], include = [], exclude = []) {
+  const skip = new Set(
+    exclude.map((item) => normalizeFullName(item).toLowerCase()).filter(Boolean),
+  );
+  const seen = new Set();
+  const repos = [];
+  const added = { included: 0, discovered: 0 };
+  let excluded = 0;
+
+  const take = (repo, bucket) => {
+    // 只统计公开仓库：贡献清单已按可见性剔除，这里统一再挡一次
+    if (repo?.private) {
+      return;
+    }
+    const key = repoKeyOf(repo);
+    if (!key) {
+      return;
+    }
+    if (skip.has(key)) {
+      excluded += 1;
+      return;
+    }
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    repos.push(repo);
+    added[bucket] += 1;
+  };
+
+  for (const item of include) {
+    // 清单项通常是 confirmIncludedRepos 带回来的仓库详情（已含 fork 与上游关系），
+    // 也允许直接传 owner/name 字符串
+    const repo =
+      item && typeof item === "object"
+        ? normalizeFullName(item.full_name)
+          ? item
+          : null
+        : repoFromFullName(item);
+    if (repo) {
+      take(repo, "included");
+    }
+  }
+  for (const repo of discovered) {
+    take(repo, "discovered");
+  }
+  return { repos, added, excluded };
 }
 
 /**
@@ -693,7 +1226,7 @@ async function fetchAccountEmails(app) {
     );
   }
 
-  const perPage = intOf(app.api.per_page, 100);
+  const perPage = apiPerPage(app);
   const limit = intOf(app.api.max_api_pages, 10);
   const emails = new Set();
   for (let page = 1; page <= limit; page += 1) {
@@ -918,7 +1451,8 @@ async function cloneOrUpdate(repoPath, cloneUrl, log) {
   }
 
   log.color("  📥 克隆仓库...", YELLOW);
-  // 统计只需要 commit 与 tree 对象；文件内容（blob）只在缓存未命中的少数 commit
+  // 只取默认分支：gh-pages 上是构建出来的页面而不是代码，不计行数，不值得多拉一份
+  // 历史。统计只需要 commit 与 tree 对象；文件内容（blob）只在缓存未命中的少数 commit
   // 计算增删行数时才用到，git 会按需补拉。这类仓库的对象里有 96% 以上是 blob，
   // 因此用 blobless 部分克隆压掉下载量，比全量拉取省一个数量级。
   let code = 1;
@@ -1113,7 +1647,7 @@ function countImages(app, files) {
 
 async function getCommitsFromApi(app, owner, repoName, branch, log) {
   const base = app.api.github_api_base;
-  const perPage = intOf(app.api.per_page, 100);
+  const perPage = apiPerPage(app);
   const maxPages = intOf(app.api.max_api_pages, 10);
   const commits = [];
 
@@ -1283,7 +1817,6 @@ function loadCache(app, repoName, log, repoId = "") {
   }
   return normalizeCacheData(cache, log);
 }
-
 function normalizeCacheData(cache, log) {
   const normalized = new Map();
   for (const [repo, items] of cache) {
@@ -1311,7 +1844,6 @@ function normalizeCacheData(cache, log) {
   }
   return normalized;
 }
-
 function sortAndReindex(cache) {
   const out = new Map();
   for (const [repo, items] of cache) {
@@ -1476,8 +2008,7 @@ function cleanStaleCache(
   }
   log.color(`    ✅ 已清除 ${stale.size} 个过期提交`, GREEN);
 }
-
-/** 删除已不在仓库列表中的缓存；改名/转让由 ID 识别，不会误删。 */
+/** 删除已不在统计范围内的缓存；改名/转让由 ID 识别，不会误删。 */
 function cleanupStaleCacheFiles(app, activeRepoNames, activeRepoIds) {
   if (!fs.existsSync(app.cacheDir) || !activeRepoNames.size) {
     return false;
@@ -1712,7 +2243,6 @@ async function analyzeRepo(
   const savedChanged = saveCache(app, repoName, cache, log, repoId, fullName);
   return cacheMisses > 0 || staleCleaned || savedChanged;
 }
-
 // ============================================================================
 // SVG 卡片
 // ============================================================================
@@ -1885,13 +2415,35 @@ async function processRepos(app, repos) {
   const activeRepoNames = new Set();
   const activeRepoIds = new Set();
   const firstSeen = new Map();
+  // 缓存文件以仓库名为准，不同归属的同名仓库会写到同一个文件，
+  // 后写入的会把前一个覆盖掉，因此第二个直接跳过并说明原因
+  const cacheOwnerByName = new Map();
   const entries = [];
+  // 没能确认 fork 关系的仓库：本轮跳过，且不清理旧缓存
+  let upstreamUnknown = 0;
 
   repos.forEach((repo, index) => {
-    const [upOwner, upName] = upstreams[index];
+    const [upOwner, upName, upUnknown] = upstreams[index];
     const repoName = repo?.name;
     const repoUrl = repo?.html_url;
     if (!repoName || !repoUrl) {
+      return;
+    }
+
+    if (upUnknown) {
+      upstreamUnknown += 1;
+      const log = new Log();
+      log.separator(`📦 仓库: ${repoName}`, YELLOW, separatorLength);
+      log.color(`  URL: ${repoUrl}`, NC);
+      log.color("  ⏭ 无法确认 fork 关系，本轮跳过", YELLOW);
+      entries.push({
+        repoName,
+        target: "（未确认）",
+        log,
+        status: "skipped",
+        note: "无法确认 fork 关系，本轮跳过",
+        meta: null,
+      });
       return;
     }
 
@@ -1944,6 +2496,16 @@ async function processRepos(app, repos) {
       entry.note = `与 ${firstSeen.get(targetKey)} 同源，跳过`;
     } else {
       firstSeen.set(targetKey, repoName);
+      const cacheOwner = cacheOwnerByName.get(targetName);
+      if (
+        cacheOwner !== undefined &&
+        cacheOwner.toLowerCase() !== cloneOwner.toLowerCase()
+      ) {
+        entry.status = "duplicate";
+        entry.note = `与 ${cacheOwner} 的同名仓库共用缓存 ${targetName}.json，跳过`;
+      } else {
+        cacheOwnerByName.set(targetName, cloneOwner);
+      }
     }
     entries.push(entry);
   });
@@ -1955,7 +2517,7 @@ async function processRepos(app, repos) {
   );
   for (const entry of entries) {
     const name = entry.repoName.padEnd(width);
-    if (entry.status === "duplicate") {
+    if (entry.status !== "ok") {
       printColor(
         `  ⏭ ${name}  →  ${entry.target}（${entry.note}）`,
         YELLOW,
@@ -1963,6 +2525,12 @@ async function processRepos(app, repos) {
     } else {
       printColor(`  ✓ ${name}  →  ${entry.target}`, NC);
     }
+  }
+  if (upstreamUnknown) {
+    printColor(
+      `  ⚠️  ${upstreamUnknown} 个仓库无法确认 fork 关系，本轮跳过（沿用旧缓存）`,
+      YELLOW,
+    );
   }
   printColor("", NC);
 
@@ -2028,7 +2596,10 @@ async function processRepos(app, repos) {
     printColor(`  ❌ ${failed.length} 个仓库未能完成，统计可能不完整`, RED);
   }
 
-  if (
+  if (upstreamUnknown) {
+    // 这些仓库本轮没参与统计，但缓存还在用，清理会把它们的数据一起删掉
+    printColor("ℹ️  有仓库未确认 fork 关系，本次保留旧缓存不做清理", NC);
+  } else if (
     activeRepoNames.size &&
     cleanupStaleCacheFiles(app, activeRepoNames, activeRepoIds)
   ) {
@@ -2150,16 +2721,40 @@ async function run() {
   app.addEmails(accountEmails);
   printColor(`📧 已读取账号下的 ${accountEmails.size} 个邮箱`, GREEN);
 
-  let repos;
-  try {
-    repos = await getRepos(app);
-  } catch (exc) {
-    if (exc instanceof ApiError) {
-      printColor(`❌ ${exc.message}`, RED);
-      return 1;
+  // 统计范围的唯一来源是贡献清单：查询里 includeUserRepositories: true，
+  // 名下有自己提交的仓库本来就包含在内；再查一份名下列表只会多出
+  // 「我拥有但零提交」的仓库，克隆下来对卡片没有任何贡献
+  let scopeRepos = [];
+  if (app.repos.discover) {
+    printColor("🔎 查询有自己提交的仓库...", YELLOW);
+    const found = await discoverScopeRepos(app);
+    scopeRepos = found.repos;
+    const privateNote = found.privateRepos.length
+      ? `，私有跳过 ${found.privateRepos.length}`
+      : "";
+    printColor(
+      `    本轮命中 ${found.fresh} 个${privateNote}，名单累计 ${found.repos.length} 个`,
+      NC,
+    );
+    if (!found.complete) {
+      printColor(
+        "⚠️  贡献清单查询不完整（配额或翻页中断），本轮与上轮名单合并",
+        YELLOW,
+      );
     }
-    throw exc;
   }
+
+  const included = await confirmIncludedRepos(app, app.repos.include);
+  const { repos, added, excluded } = mergeRepos(
+    scopeRepos,
+    included,
+    app.repos.exclude,
+  );
+  printColor(
+    `📦 统计范围: ${repos.length} 个仓库（清单 ${added.included}，` +
+      `发现 ${added.discovered}${excluded ? `，排除 ${excluded}` : ""}）`,
+    GREEN,
+  );
   if (!repos.length) {
     printColor("⚠️  没有找到仓库", YELLOW);
     return 1;
@@ -2172,11 +2767,12 @@ async function run() {
     return 1;
   }
 
-  // 失败的仓库沿用上次缓存，汇总仍自洽
+  // 失败的仓库沿用上次缓存，汇总仍自洽，因此不阻断发布；
+  // 只是这些仓库的新提交本轮没有计入
   if (failed.length) {
     printColor(
-      `❌ ${failed.length} 个仓库未能完成，结果可能不完整: ${failed.join(", ")}`,
-      RED,
+      `⚠️  ${failed.length} 个仓库未能完成，沿用上次缓存: ${failed.join(", ")}`,
+      YELLOW,
     );
   }
 
@@ -2203,12 +2799,6 @@ async function run() {
     return 1;
   }
 
-  // 有仓库未完成时结果不完整，不发布，由工作流保持站点的上一版
-  if (failed.length) {
-    printColor("❌ 结果不完整，本次不发布", RED);
-    return 1;
-  }
-
   printSeparator("✅ 完成", GREEN, separatorLength);
   return 0;
 }
@@ -2222,11 +2812,18 @@ if (invokedDirectly) {
 }
 
 export {
+  ApiError,
   App,
-  collectCommitDetails,
-  collectUserCommits,
+  cleanStaleCache,
+  confirmIncludedRepos,
+  discoverRepos,
+  discoverScopeRepos,
   formatNumber,
   generateContributionsSvg,
+  getUpstreamRepo,
+  loadCache,
+  mergeRepos,
+  normalizeFullName,
   parseIsoTimestamp,
   parseToml,
   serializeCache,
