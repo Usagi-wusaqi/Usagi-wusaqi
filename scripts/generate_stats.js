@@ -2414,7 +2414,7 @@ async function processJob(app, job) {
 }
 
 /** 返回 [是否有变更, 未能完成的仓库名]。 */
-async function processRepos(app, repos) {
+async function processRepos(app, repos, scopeComplete = true) {
   const separatorLength = intOf(
     app.behavior.separator_length,
     DEFAULT_SEPARATOR_LENGTH,
@@ -2619,9 +2619,9 @@ async function processRepos(app, repos) {
     printColor(`  ❌ ${failed.length} 个仓库未能完成，统计可能不完整`, RED);
   }
 
-  if (upstreamUnknown) {
-    // 这些仓库本轮没参与统计，但缓存还在用，清理会把它们的数据一起删掉
-    printColor("ℹ️  有仓库未确认 fork 关系，本次保留旧缓存不做清理", NC);
+  if (!scopeComplete || upstreamUnknown) {
+    // 范围判断本身不完整时不动旧缓存：否则一次查询失败就会把已统计的仓库连数据一起清掉
+    printColor("ℹ️  统计范围可能不完整，本次保留旧缓存不做清理", NC);
   } else if (
     activeRepoNames.size &&
     cleanupStaleCacheFiles(app, activeRepoNames, activeRepoIds)
@@ -2631,7 +2631,6 @@ async function processRepos(app, repos) {
 
   return [anyChanged, failed];
 }
-
 // ============================================================================
 // 入口
 // ============================================================================
@@ -2748,10 +2747,14 @@ async function run() {
   // 名下有自己提交的仓库本来就包含在内；再查一份名下列表只会多出
   // 「我拥有但零提交」的仓库，克隆下来对卡片没有任何贡献
   let scopeRepos = [];
+  // 只统计 include 清单时范围并不完整，不能拿它去清理旧缓存
+  let scopeComplete = false;
   if (app.repos.discover) {
     printColor("🔎 查询有自己提交的仓库...", YELLOW);
     const found = await discoverScopeRepos(app);
     scopeRepos = found.repos;
+    // 查询不完整时只是「本轮已确认的部分」，范围判断不完整就不能清缓存
+    scopeComplete = found.complete;
     const privateNote = found.privateRepos.length
       ? `，私有跳过 ${found.privateRepos.length}`
       : "";
@@ -2760,6 +2763,19 @@ async function run() {
       NC,
     );
     if (!found.complete) {
+      // 一条都没查到通常是令牌或权限出了问题。此时若只告警并沿用旧名单，卡片会
+      // 长期停在旧数据上而 CI 始终是绿的，问题可以挂几周没人发现，所以直接失败
+      if (!found.fresh) {
+        printColor(
+          "❌ 贡献清单查询没有任何结果，统计范围无法确认，本次终止",
+          RED,
+        );
+        printColor(
+          "   请检查 EMAILS_TOKEN 是否为本人令牌、是否具备 GraphQL 与读取邮箱的权限",
+          NC,
+        );
+        return 1;
+      }
       printColor(
         "⚠️  贡献清单查询不完整（配额或翻页中断），本轮与上轮名单合并",
         YELLOW,
@@ -2783,7 +2799,7 @@ async function run() {
     return 1;
   }
 
-  const [anyChanged, failed] = await processRepos(app, repos);
+  const [anyChanged, failed] = await processRepos(app, repos, scopeComplete);
 
   if (app.rateLimit) {
     printColor(`❌ ${app.rateLimit}`, RED);
@@ -2825,7 +2841,6 @@ async function run() {
   printSeparator("✅ 完成", GREEN, separatorLength);
   return 0;
 }
-
 const invokedDirectly =
   Boolean(process.argv[1]) &&
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
