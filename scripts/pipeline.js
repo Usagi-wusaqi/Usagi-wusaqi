@@ -24,6 +24,9 @@ const CACHE_DIR = path.join(SCRIPT_DIR, "stats_cache");
 const SITE_DIR = path.join(PROJECT_ROOT, "_site");
 const CARD = path.join(PROJECT_ROOT, "contributions.svg");
 const MANIFEST = "manifest.json";
+// 统计范围的发现缓存：不在明细清单里，单独发布/取回，避免混进仓库缓存
+const SCOPE_REL = path.join("scope", "index.json");
+const SCOPE_PUBLISHED = "scope.json";
 // 每次运行的最终汇总随明细一起发布，下次直接读回做对比
 const LATEST = "latest.json";
 const PREVIOUS_SUMMARY = path.join(SCRIPT_DIR, "previous_summary.json");
@@ -155,10 +158,13 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 /**
  * 带重试的 GET；重试用于躲开站点的临时 5xx，避免退化成全量统计。
  */
-async function fetchBytes(url, { headers = {}, timeout = FETCH_TIMEOUT } = {}) {
+async function fetchBytes(
+  url,
+  { headers = {}, timeout = FETCH_TIMEOUT, retries = FETCH_RETRIES } = {},
+) {
   const requestHeaders = { "User-Agent": USER_AGENT, ...headers };
   let last = null;
-  for (let attempt = 0; attempt < FETCH_RETRIES; attempt += 1) {
+  for (let attempt = 0; attempt < Math.max(retries, 1); attempt += 1) {
     try {
       const response = await fetch(url, {
         headers: requestHeaders,
@@ -170,7 +176,7 @@ async function fetchBytes(url, { headers = {}, timeout = FETCH_TIMEOUT } = {}) {
       return Buffer.from(await response.arrayBuffer());
     } catch (exc) {
       last = exc;
-      if (attempt + 1 < FETCH_RETRIES) {
+      if (attempt + 1 < Math.max(retries, 1)) {
         await sleep(2 * (attempt + 1) * 1000);
       }
     }
@@ -229,6 +235,27 @@ function jsonPrettyArray(values) {
   return `[\n${items.join(",\n")}\n]\n`;
 }
 
+/**
+ * 发现缓存的有效内容签名：仓库名单。
+ *
+ * `updated_at` 每次运行都会变，直接比字节会把「内容没变」也判成已变更，
+ * 因此只比名单，并忽略更新时间与顺序。读不到文件时给空串，
+ * 调用方按「有变化」处理，最多多部署一次。
+ */
+function scopeSignature(file) {
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return "";
+  }
+  const repos = (Array.isArray(data?.repos) ? data.repos : [])
+    .map((item) => String(item?.full_name ?? "").toLowerCase())
+    .filter(Boolean)
+    .sort();
+  return JSON.stringify(repos);
+}
+
 // ---------------------------------------------------------------------------
 // restore：从站点读回统计缓存
 // ---------------------------------------------------------------------------
@@ -282,6 +309,27 @@ async function cmdRestore() {
     }
     fs.writeFileSync(path.join(CACHE_DIR, name), raw);
     restored += 1;
+  }
+
+  // 统计范围的发现缓存：取回后与下次搜到的仓库合并；站点还没有时从空名单开始
+  try {
+    // 首次部署时站点还没有这份文件，只试一次，避免 404 触发重试等待
+    const raw = await fetchBytes(`${base}/${SCOPE_PUBLISHED}?t=${stamp}`, {
+      headers: { "Cache-Control": "no-cache" },
+      retries: 1,
+    });
+    JSON.parse(raw.toString("utf8"));
+    const target = path.join(CACHE_DIR, SCOPE_REL);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, raw);
+    // 留一份站点上的版本，打包时据此判断这次要不要部署
+    fs.copyFileSync(target, path.join(CACHE_DIR, "scope", "published.json"));
+    console.log("✅ 已取回统计范围的发现缓存");
+  } catch {
+    // 站点还没有这份文件（首次部署）：清掉可能残留的对照副本，
+    // 打包时按「有变化」处理
+    fs.rmSync(path.join(CACHE_DIR, "scope", "published.json"), { force: true });
+    console.log("ℹ️  站点尚无发现缓存，本次查到的仓库即初始名单");
   }
 
   // 同时取回上次运行的最终汇总，摘要直接对比两个数字对象
@@ -346,6 +394,12 @@ function cmdSite() {
     return 1;
   }
 
+  // 发现缓存单独放一份，不进明细清单，也不参与索引页
+  const scopeFile = path.join(CACHE_DIR, SCOPE_REL);
+  if (fs.existsSync(scopeFile)) {
+    fs.copyFileSync(scopeFile, path.join(dataDir, SCOPE_PUBLISHED));
+  }
+
   fs.writeFileSync(path.join(dataDir, MANIFEST), jsonPrettyArray(names), {
     encoding: "utf8",
   });
@@ -359,13 +413,23 @@ function cmdSite() {
   });
 
   const unchanged = summariesEqual(readSummary(PREVIOUS_SUMMARY), summary);
+  // 发现缓存也是产物：仓库名单全靠它取回，只比卡片的话，连续几次数据没变化
+  // 就会一直跳过部署，站点上那份停在旧的，新发现的仓库存不下来、摘掉的还会回来
+  const scopeChanged =
+    fs.existsSync(scopeFile) &&
+    scopeSignature(scopeFile) !==
+      scopeSignature(path.join(CACHE_DIR, "scope", "published.json"));
+  const skipDeploy = unchanged && !scopeChanged;
   console.log(
     `📦 托管 ${names.length} 份统计缓存 + 1 张卡片 + 1 个索引页 + 1 份汇总`,
   );
-  if (unchanged) {
+  if (scopeChanged && unchanged) {
+    console.log("ℹ️  统计数字没变，但发现名单有更新，仍需部署");
+  }
+  if (skipDeploy) {
     console.log("ℹ️  汇总与原发布版本一致，本次可跳过部署与清缓存");
   }
-  emit({ repo_count: names.length, unchanged: String(unchanged) });
+  emit({ repo_count: names.length, unchanged: String(skipDeploy) });
   return 0;
 }
 
@@ -726,5 +790,6 @@ export {
   jsonPrettyArray,
   readSummary,
   renderIndex,
+  scopeSignature,
   summariesEqual,
 };

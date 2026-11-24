@@ -29,6 +29,7 @@ import {
   jsonPrettyArray,
   readSummary,
   renderIndex,
+  scopeSignature,
   summariesEqual,
 } from "./pipeline.js";
 
@@ -223,6 +224,40 @@ test("manifest 与耗时格式", () => {
   assert.equal(formatDelta(-3), "-3");
   assert.equal(formatDelta(0), "0");
   assert.equal(formatDelta(1234), "+1,234");
+});
+
+test("发现缓存的签名忽略更新时间与名单顺序，只看仓库", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "usagi-signature-"));
+  try {
+    const write = (name, payload) => {
+      const file = path.join(dir, name);
+      fs.writeFileSync(file, JSON.stringify(payload));
+      return file;
+    };
+    const base = {
+      version: 2,
+      updated_at: "2026-05-01T00:00:00.000000+00:00",
+      repos: [{ full_name: "Org/A" }, { full_name: "org/b" }],
+    };
+    const first = write("first.json", base);
+    // 只有写入时间和名单顺序变了，内容等价，不该触发重新部署
+    const same = write("same.json", {
+      ...base,
+      updated_at: "2026-05-02T00:00:00.000000+00:00",
+      repos: [{ full_name: "org/b" }, { full_name: "org/a" }],
+    });
+    assert.equal(scopeSignature(first), scopeSignature(same));
+
+    // 名单变化要算作有更新
+    assert.notEqual(
+      scopeSignature(first),
+      scopeSignature(write("repos.json", { ...base, repos: [{ full_name: "org/a" }] })),
+    );
+    // 读不到文件时给空串：调用方按有变化处理，最多多部署一次
+    assert.equal(scopeSignature(path.join(dir, "missing.json")), "");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 function snapshot() {
@@ -750,8 +785,6 @@ test("清单里未标 fork 的仓库会查详情换算上游，明确的非 fork
 });
 
 
-const clone = (value) => JSON.parse(JSON.stringify(value));
-
 test("仓库改名后按 ID 接续缓存，旧键的提交不会被算两遍", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "usagi-rename-"));
   try {
@@ -867,6 +900,8 @@ test("fork 套 fork 时按根仓库解析克隆目标，避免与根仓库重复
   });
   assert.deepEqual([owner, name], ["up", "root"]);
 });
+
+const clone = (value) => JSON.parse(JSON.stringify(value));
 
 test("汇总比对：完全一致才判为无需部署", () => {
   const base = summaryFixture();
