@@ -7,7 +7,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "lint": "node --check scripts/generate_stats.js && node --check scripts/pipeline.js",
+    "lint": "node scripts/lint.js",
     "test": "node --test"
   }
 }

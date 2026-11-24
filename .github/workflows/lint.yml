@@ -22,7 +22,7 @@ jobs:
 
       # 不装任何依赖，只用 Node 自带的语法检查
       - name: Syntax check
-        run: node --check scripts/generate_stats.js && node --check scripts/pipeline.js
+        run: node scripts/lint.js
 
       - name: Run tests
         run: node --test

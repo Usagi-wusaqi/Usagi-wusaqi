@@ -40,7 +40,8 @@ GitHub Pages ← README.md 中的固定图片链接
 ├── config.toml                      # API、统计范围、SVG 样式与运行参数
 ├── package.json                     # ESM 声明与检查/测试命令，无第三方依赖
 ├── scripts/
-│   ├── generate_stats.js            # 数据采集、缓存、聚合与 SVG 生成
+│   ├── generate_stats.js            # 入口：读配置、发起统计、写卡片
+│   ├── lib/                         # 按职责拆分的模块，见下
 │   ├── pipeline.js                  # 站点读写：读回缓存、打包产物、清缓存、写摘要
 │   └── scripts.test.js              # 配置解析、统计范围合并、卡片与序列化的单元测试
 ├── .github/workflows/
@@ -51,7 +52,22 @@ GitHub Pages ← README.md 中的固定图片链接
 └── CONTRIBUTING.md                  # 仓库说明
 ```
 
-`generate_stats.js` 按职责分为配置加载、API 客户端、统计范围合并、仓库枚举与 Fork 判定、克隆与提交采集、缓存读写、SVG 生成、并发调度及主流程等模块。`pipeline.js` 提供 `restore`、`site`、`purge`、`summary` 四个子命令，工作流只负责调用，两者都在语法检查与单元测试的覆盖范围内。
+`generate_stats.js` 只做入口：读配置、发起统计、写卡片。具体职责按依赖层次拆在 `scripts/lib/` 下，只能向下依赖：
+
+- `format.js` —— 终端输出、日志缓冲、数字与时间格式，最底层
+- `pool.js` —— 有界并发原语，不关心具体任务
+- `repo.js` —— 仓库标识的纯函数：全名归一、去重键、fork 上游推断，不发请求
+- `http.js` —— HTTP 请求与错误类型，REST 与 GraphQL 共用
+- `git.js` —— git 子进程：克隆、取提交元数据、批量取 diff
+- `config.js` —— TOML 解析与运行配置（`App`）
+- `cache.js` —— 提交明细缓存：读取、去重、失效清理、汇总
+- `github.js` —— 贡献清单、上游关系、账号邮箱，以及统计范围名单
+- `api.js` —— git 不可用时的 API 兜底
+- `analyze.js` —— 单个仓库的分析流程
+- `svg.js` —— 贡献卡片的生成与保存
+- `process.js` —— 多个仓库的并发调度与去重
+
+`pipeline.js` 提供 `restore`、`site`、`purge`、`summary` 四个子命令，工作流只负责调用。所有脚本都在语法检查与单元测试的覆盖范围内。
 
 ## 统计口径
 
