@@ -58,7 +58,6 @@ jobs:
 
           ORIGIN_USERNAME="${{ github.repository_owner }}"
           echo "ORIGIN_USERNAME=$ORIGIN_USERNAME" >> $GITHUB_OUTPUT
-          echo "UPSTREAM_USERNAME=$ORIGIN_USERNAME" >> $GITHUB_OUTPUT
           # 下一步是 cache/restore，记下边界时间即可算出它的用时
           echo "T_CACHE=$(date +%s)" >> $GITHUB_ENV
           echo "✅ 目标用户: $ORIGIN_USERNAME"
@@ -88,7 +87,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EMAILS_TOKEN: ${{ secrets.EMAILS_TOKEN }}
           ORIGIN_USERNAME: ${{ steps.determine-users.outputs.ORIGIN_USERNAME }}
-          UPSTREAM_USERNAME: ${{ steps.determine-users.outputs.UPSTREAM_USERNAME }}
         run: |
           echo "🚀 开始生成统计数据..."
           echo "👤 目标用户: $ORIGIN_USERNAME"
@@ -179,7 +177,6 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           ORIGIN: ${{ steps.determine-users.outputs.ORIGIN_USERNAME }}
-          UPSTREAM: ${{ steps.determine-users.outputs.UPSTREAM_USERNAME }}
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
           DEPLOY: ${{ steps.deployment.outcome }}
           UNCHANGED: ${{ steps.prepare-site.outputs.unchanged }}

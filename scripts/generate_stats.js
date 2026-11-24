@@ -9,7 +9,6 @@
  *     GH_TOKEN            GitHub 令牌（必需）
  *     EMAILS_TOKEN        账号邮箱令牌（必需，权限 user:email）
  *     ORIGIN_USERNAME     统计目标用户名（缺省时从 README.md 读取）
- *     UPSTREAM_USERNAME   上游用户名（缺省时从 README.md 读取）
  *
  * 实现要点：
  *     1. 每个仓库只用 2 次 git 进程（1 次取 commit 元数据、1 次批量取 diff 统计），
@@ -390,9 +389,8 @@ function parseToml(text) {
 }
 
 class App {
-  constructor(originUsername, upstreamUsername, token) {
+  constructor(originUsername, token) {
     this.originUsername = originUsername;
-    this.upstreamUsername = upstreamUsername;
     this.token = token;
     setGitAuth(token);
 
@@ -2069,7 +2067,6 @@ async function run() {
   }
 
   let originUsername = process.env.ORIGIN_USERNAME ?? "";
-  let upstreamUsername = process.env.UPSTREAM_USERNAME ?? "";
   const token = process.env.GH_TOKEN ?? "";
 
   const readmePath = path.join(PROJECT_ROOT, "README.md");
@@ -2077,12 +2074,8 @@ async function run() {
     originUsername =
       getDefaultFromReadme(readmePath, "ORIGIN_USERNAME") ?? "";
   }
-  if (!upstreamUsername) {
-    upstreamUsername =
-      getDefaultFromReadme(readmePath, "UPSTREAM_USERNAME") ?? "";
-  }
 
-  const app = new App(originUsername, upstreamUsername, token);
+  const app = new App(originUsername, token);
   const separatorLength = intOf(
     app.behavior.separator_length,
     DEFAULT_SEPARATOR_LENGTH,
@@ -2091,7 +2084,6 @@ async function run() {
   printSeparator("🚀 开始生成 GitHub 统计", GREEN, separatorLength);
   printColor("📊 统计配置", YELLOW);
   printColor(`  - 远端用户 ${app.originUsername}`, NC);
-  printColor(`  - 上游用户 ${app.upstreamUsername}`, NC);
   printColor(`  - 缓存目录 ${shortPath(app.cacheDir)}`, NC);
   printColor(
     `  - 并发度 ${app.behavior.concurrency ?? DEFAULT_CONCURRENCY}`,

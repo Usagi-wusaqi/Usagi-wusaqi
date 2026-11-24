@@ -637,7 +637,6 @@ function cmdSummary() {
     "| --- | --- |",
     `| 触发方式 | ${trigger} |`,
     `| 统计账号 | ${env("ORIGIN")} |`,
-    `| 上游账号 | ${env("UPSTREAM")} |`,
     `| 缓存仓库数 | ${repo_count} |`,
     `| 提交数 | ${formatNumber(commits)} |`,
     `| 新增 / 删除 | +${formatNumber(additions)} / -${formatNumber(deletions)}（净 ${net >= 0 ? "+" : ""}${formatNumber(net)}） |`,

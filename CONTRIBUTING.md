@@ -98,7 +98,6 @@ _site/
 | `GH_TOKEN` | 调用 REST API 与克隆仓库 | 是 |
 | `EMAILS_TOKEN` | 读取账号邮箱，需 `user:email` 权限 | 是 |
 | `ORIGIN_USERNAME` | 统计目标账号 | 否，缺省时读 README 头部注释 |
-| `UPSTREAM_USERNAME` | Fork 场景下的上游账号 | 否，缺省时读 README 头部注释 |
 
 命令行支持 `--clear-cache`（清除本地缓存与仓库克隆副本）和 `-h` / `--help`。
 

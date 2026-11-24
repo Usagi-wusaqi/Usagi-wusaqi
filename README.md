@@ -1,9 +1,8 @@
 <!--
 ORIGIN_USERNAME = Usagi-wusaqi
-UPSTREAM_USERNAME = Usagi-wusaqi
 
 说明：
-- 上面两个值供脚本在环境变量缺失时读取
+- 上面这个值供脚本在环境变量缺失时读取
 - 贡献卡片由 GitHub Pages 托管，本文件只保留固定外链
 - 作者邮箱在运行时从 GitHub API 获取，不写入配置文件
 -->

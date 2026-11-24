@@ -71,7 +71,7 @@ test("TOML 非法内容会抛错，由调用方回退默认配置", () => {
 });
 
 test("卡片 SVG 的列位置与指标格式", () => {
-  const app = new App("Usagi-wusaqi", "Usagi-wusaqi", "token");
+  const app = new App("Usagi-wusaqi", "token");
   const svg = generateContributionsSvg(
     app,
     {
@@ -97,7 +97,7 @@ test("卡片 SVG 的列位置与指标格式", () => {
 });
 
 test("没有自定义标题时按账号生成标题", () => {
-  const app = new App("Usagi-wusaqi", "Usagi-wusaqi", "token");
+  const app = new App("Usagi-wusaqi", "token");
   // 走 custom_title 为空的回退分支
   app.svg.custom_title = null;
   const stats = {
